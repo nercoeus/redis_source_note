@@ -33,6 +33,7 @@
 #ifndef __SDS_H
 #define __SDS_H
 
+//sds扩容处理方式界限
 #define SDS_MAX_PREALLOC (1024*1024)
 const char *SDS_NOINIT;
 
