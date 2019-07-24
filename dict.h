@@ -142,6 +142,7 @@ typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
         (d)->type->keyCompare((d)->privdata, key1, key2) : \
         (key1) == (key2))
 
+// 获取key对应的hash值，使用dict->type中的方法
 #define dictHashKey(d, key) (d)->type->hashFunction(key)
 #define dictGetKey(he) ((he)->key)
 #define dictGetVal(he) ((he)->v.val)
