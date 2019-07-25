@@ -41,12 +41,13 @@
 #define DICT_OK 0
 #define DICT_ERR 1
 
+// 表的数据结构推荐看《redis设计与实现》进行了解
 /* Unused arguments generate annoying warnings... */
 #define DICT_NOTUSED(V) ((void) V)
-//dict节点
+// 元素节点
 typedef struct dictEntry {
     void *key;            //键
-    union {     //这里使用了一个union，interesting
+    union {               //这里使用了一个union，interesting
         void *val;
         uint64_t u64;
         int64_t s64;
@@ -67,7 +68,7 @@ typedef struct dictType {
 
 /* This is our hash table structure. Every dictionary has two of this as we
  * implement incremental rehashing, for the old to the new table. */
-//
+// hash表
 typedef struct dictht {
     dictEntry **table;      //这是一个hash表数组
     unsigned long size;     //hash表的size
@@ -75,7 +76,7 @@ typedef struct dictht {
     unsigned long used;     //表中节点数量
 } dictht;
 
-//dict头节点
+// dict头节点
 typedef struct dict {
     dictType *type;    //可以调用value对应的操作函数
     void *privdata;    //dict的隐藏数据
@@ -88,7 +89,7 @@ typedef struct dict {
  * dictAdd, dictFind, and other functions against the dictionary even while
  * iterating. Otherwise it is a non safe iterator, and only dictNext()
  * should be called while iterating. */
-//dict的迭代器，这里有一个safe字段，用来表示这个iterator是否安全，如果该iterator是安全的，我们可以使用它来进行add，find，和其他一些改变字典的操作，如果不安全则只能进行next操作
+// dict的迭代器，这里有一个safe字段，用来表示这个iterator是否安全，如果该iterator是安全的，我们可以使用它来进行add，find，和其他一些改变字典的操作，如果不安全则只能进行next操作
 typedef struct dictIterator {
     dict *d;
     long index;
@@ -98,14 +99,15 @@ typedef struct dictIterator {
     long long fingerprint;
 } dictIterator;
 
+// 这里是两个函数类型，用来作为参数进行传递
 typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
 typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 
 /* This is the initial size of every hash table */
-//默认的hashtable大小为4
+//默认的桶大小为4
 #define DICT_HT_INITIAL_SIZE     4
 
-/* ------------------------------- Macros ------------------------------------*/
+/* ------------------------------- 宏指令 ------------------------------------*/
 #define dictFreeVal(d, entry) \
     if ((d)->type->valDestructor) \
         (d)->type->valDestructor((d)->privdata, (entry)->v.val)
