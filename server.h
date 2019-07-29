@@ -828,6 +828,7 @@ struct sharedObjectsStruct {
 };
 
 /* ZSETs use a specialized version of Skiplists */
+// 跳表的结构体
 typedef struct zskiplistNode {
     // 使用sds来保存数据指针，这里sds其实是char*
     sds ele;
