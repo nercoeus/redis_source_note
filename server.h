@@ -1716,12 +1716,16 @@ user *ACLGetUserByName(const char *name, size_t namelen);
 #define ZADD_CH (1<<16)      /* Return num of elements added or updated. */
 
 /* Struct to hold a inclusive/exclusive range spec by score comparison. */
+// 一个范围用来比较
 typedef struct {
+    // 范围边界值
     double min, max;
+    // 最大最小两种情况是否可以等于比较（也就是左右两侧是开区间还是闭区间）
     int minex, maxex; /* are min or max exclusive? */
 } zrangespec;
 
 /* Struct to hold an inclusive/exclusive range spec by lexicographic comparison. */
+// 和上面类似，只是左右边界变成了sds用来和容器中的value进行比较
 typedef struct {
     sds min, max;     /* May be set to shared.(minstring|maxstring) */
     int minex, maxex; /* are min or max exclusive? */
