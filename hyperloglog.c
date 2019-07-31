@@ -34,6 +34,9 @@
 #include <stdint.h>
 #include <math.h>
 
+// HyperLogLog基数统计可以用来粗略的统计基数，误差在0.81%，并且无法获取准确技术。
+一般可以用来统计在线人数下载次数等精度不高的数据
+
 /* The Redis HyperLogLog implementation is based on the following ideas:
  *
  * * The use of a 64 bit hash function as proposed in [1], in order to don't
@@ -178,7 +181,7 @@
  * when this implementation switches to the dense representation is
  * configured via the define server.hll_sparse_max_bytes.
  */
-
+// 基数统计头部
 struct hllhdr {
     char magic[4];      /* "HYLL" */
     uint8_t encoding;   /* HLL_DENSE or HLL_SPARSE. */
