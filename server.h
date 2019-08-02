@@ -583,6 +583,7 @@ typedef struct RedisModuleDigest {
 /* Objects encoding. Some kind of objects like Strings and Hashes can be
  * internally represented in multiple ways. The 'encoding' field of the object
  * is set to one of this fields for this object. */
+// 总共 11 种编码方式
 #define OBJ_ENCODING_RAW 0     /* Raw representation */
 #define OBJ_ENCODING_INT 1     /* Encoded as integer */
 #define OBJ_ENCODING_HT 2      /* Encoded as hash table */
@@ -601,13 +602,15 @@ typedef struct RedisModuleDigest {
 
 #define OBJ_SHARED_REFCOUNT INT_MAX
 typedef struct redisObject {
-    unsigned type:4;
-    unsigned encoding:4;
+    unsigned type:4;       // 对象类型,占 4 位
+    unsigned encoding:4;   // 对象编码,占 4 位
+    // LRU 时间或 LFU 数据（最低有效 8 位频率，最高有效 16 位访问时间），24 位
+    // 当内存超限时，使用 LRU 来清楚对象
     unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
                             * LFU data (least significant 8 bits frequency
                             * and most significant 16 bits access time). */
-    int refcount;
-    void *ptr;
+    int refcount;          // 引用统计（为 0 回收内存）,同一对象可以多次引用，节约内存
+    void *ptr;             // 指向底层实现的指针
 } robj;
 
 /* Macro used to initialize a Redis object allocated on the stack.
