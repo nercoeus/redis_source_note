@@ -373,6 +373,7 @@ void sdsIncrLen(sds s, ssize_t incr) {
  *
  * if the specified length is smaller than the current length, no operation
  * is performed. */
+// 扩展空间
 sds sdsgrowzero(sds s, size_t len) {
     size_t curlen = sdslen(s);
 
