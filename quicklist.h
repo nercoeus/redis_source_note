@@ -107,8 +107,8 @@ typedef struct quicklistEntry {
     const quicklist *quicklist;     // 对应的 quicklist
     quicklistNode *node;            // 当前节点
     unsigned char *zi;              // 当前 ziplist 结构指针
-    unsigned char *value;
-    long long longval;
+    unsigned char *value;           // string 类型值
+    long long longval;              // longlong 类型值
     unsigned int sz;                // 当前 zi 字节数
     int offset;                     // entry 的当前偏移量
 } quicklistEntry;

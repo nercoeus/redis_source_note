@@ -1373,17 +1373,19 @@ typedef struct _redisSortOperation {
 } redisSortOperation;
 
 /* Structure to hold list iteration abstraction. */
+// list 迭代器
 typedef struct {
-    robj *subject;
-    unsigned char encoding;
-    unsigned char direction; /* Iteration direction */
-    quicklistIter *iter;
+    robj *subject;           // list 对象
+    unsigned char encoding;  // 编码方式（底层实现方式）
+    unsigned char direction; /* 迭代方向 Iteration direction */
+    quicklistIter *iter;     // 一个 quicklist 迭代器
 } listTypeIterator;
 
 /* Structure for an entry while iterating over a list. */
+// list 的元素
 typedef struct {
-    listTypeIterator *li;
-    quicklistEntry entry; /* Entry in quicklist */
+    listTypeIterator *li;   // 一个迭代器
+    quicklistEntry entry; /* 一个 quicklist 元素 Entry in quicklist */
 } listTypeEntry;
 
 /* Structure to hold set iteration abstraction. */
