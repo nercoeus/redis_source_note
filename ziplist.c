@@ -240,7 +240,8 @@
 /* Utility macros.*/
 
 /* Return total bytes a ziplist is composed of. */
-// 返回ziplist的字节数
+// 不太清楚作用,看效果就是把 zl 指向的内存空间中的数据转化成 uint32_t 的指针，然后把数据的头 32 位当作数字提取出来
+// 原来 ziplist 的头 32 位存储的就是字节数
 #define ZIPLIST_BYTES(zl)       (*((uint32_t*)(zl)))
 
 /* Return the offset of the last item inside the ziplist. */
