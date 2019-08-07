@@ -164,7 +164,7 @@ robj *listTypeGet(listTypeEntry *entry) {
     return value;
 }
 
-// 在 where 位置插入 value
+// 在 where 位置插入 value，insert 操作
 void listTypeInsert(listTypeEntry *entry, robj *value, int where) {
     if (entry->li->encoding == OBJ_ENCODING_QUICKLIST) {
         // 对 value 进行解码
@@ -234,31 +234,37 @@ void listTypeConvert(robj *subject, int enc) {
  * List Commands  list 操作指令
  *----------------------------------------------------------------------------*/
 
-// TODO 链表 push， push 操作实现
+// 链表 push， push 操作实现
 void pushGenericCommand(client *c, int where) {
     int j, pushed = 0;
     robj *lobj = lookupKeyWrite(c->db,c->argv[1]);
-
+    // 类型检测
     if (lobj && lobj->type != OBJ_LIST) {
         addReply(c,shared.wrongtypeerr);
         return;
     }
-
+    // 遍历所有插入数据
     for (j = 2; j < c->argc; j++) {
         if (!lobj) {
+            // 空对象，初始化一个 quicklist，通过服务器值进行设置参数值
             lobj = createQuicklistObject();
             quicklistSetOptions(lobj->ptr, server.list_max_ziplist_size,
                                 server.list_compress_depth);
+            // 添加数据
             dbAdd(c->db,c->argv[1],lobj);
         }
+        // 调用 list 的 Push
         listTypePush(lobj,c->argv[j],where);
         pushed++;
     }
+    // 通知客户端新长度
     addReplyLongLong(c, (lobj ? listTypeLength(lobj) : 0));
     if (pushed) {
+        // 确实 PUSH 了数据
         char *event = (where == LIST_HEAD) ? "lpush" : "rpush";
-
+        // 向数据库发送值变更通知
         signalModifiedKey(c->db,c->argv[1]);
+        // 发送事件通知
         notifyKeyspaceEvent(NOTIFY_LIST,event,c->argv[1],c->db->id);
     }
     server.dirty += pushed;
@@ -274,7 +280,8 @@ void rpushCommand(client *c) {
     pushGenericCommand(c,LIST_TAIL);
 }
 
-// TODO 非空链表 push， pushx 操作实现
+// 非空链表 push， pushx 操作实现
+// 这里和 push 几乎一样，判空一下即可
 void pushxGenericCommand(client *c, int where) {
     int j, pushed = 0;
     robj *subject;
@@ -307,48 +314,55 @@ void rpushxCommand(client *c) {
     pushxGenericCommand(c,LIST_TAIL);
 }
 
-// TODO 链表插入，insert 操作实现
+// 链表插入，LINSERT key BEFORE|AFTER pivot value，insert 在 pivot 元素前后操作 value
 void linsertCommand(client *c) {
     int where;
     robj *subject;
     listTypeIterator *iter;
     listTypeEntry entry;
     int inserted = 0;
-
+    // 后方插入
     if (strcasecmp(c->argv[2]->ptr,"after") == 0) {
         where = LIST_TAIL;
     } else if (strcasecmp(c->argv[2]->ptr,"before") == 0) {
+        // 前方插入
         where = LIST_HEAD;
     } else {
+        // 语法错误
         addReply(c,shared.syntaxerr);
         return;
     }
-
+    // 取数据
     if ((subject = lookupKeyWriteOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,subject,OBJ_LIST)) return;
 
     /* Seek pivot from head to tail */
+    // 寻找插入位置
     iter = listTypeInitIterator(subject,0,LIST_TAIL);
+    // 遍历寻找
     while (listTypeNext(iter,&entry)) {
         if (listTypeEqual(&entry,c->argv[3])) {
+            // 找到就进行插入
             listTypeInsert(&entry,c->argv[4],where);
             inserted = 1;
             break;
         }
     }
+    // 释放迭代器
     listTypeReleaseIterator(iter);
-
     if (inserted) {
+        // 插入成功，进行通知操作
         signalModifiedKey(c->db,c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_LIST,"linsert",
                             c->argv[1],c->db->id);
         server.dirty++;
     } else {
         /* Notify client of a failed insert */
+        // 插入失败，返回 -1
         addReplyLongLong(c,-1);
         return;
     }
-
+    // 成功后告知客户端 key 的 length
     addReplyLongLong(c,listTypeLength(subject));
 }
 
@@ -427,21 +441,24 @@ void lsetCommand(client *c) {
     }
 }
 
-// TODO 链表 Pop，Pop 操作实现
+// 链表 Pop，Pop 操作实现
 void popGenericCommand(client *c, int where) {
     robj *o = lookupKeyWriteOrReply(c,c->argv[1],shared.null[c->resp]);
     if (o == NULL || checkType(c,o,OBJ_LIST)) return;
 
     robj *value = listTypePop(o,where);
     if (value == NULL) {
+        // 没有删除节点
         addReplyNull(c);
     } else {
+        // 删除完成，通知客户端
         char *event = (where == LIST_HEAD) ? "lpop" : "rpop";
 
         addReplyBulk(c,value);
         decrRefCount(value);
         notifyKeyspaceEvent(NOTIFY_LIST,event,c->argv[1],c->db->id);
         if (listTypeLength(o) == 0) {
+            // 删除后是空 list 删除该数据即可
             notifyKeyspaceEvent(NOTIFY_GENERIC,"del",
                                 c->argv[1],c->db->id);
             dbDelete(c->db,c->argv[1]);
@@ -461,16 +478,17 @@ void rpopCommand(client *c) {
     popGenericCommand(c,LIST_TAIL);
 }
 
-// TODO LRANGE KEY_NAME START END，返回指定空间中的元素
+// LRANGE KEY_NAME START END，返回指定空间中的元素，不修改数据
 void lrangeCommand(client *c) {
     robj *o;
     long start, end, llen, rangelen;
-
+    // 获取区间值
     if ((getLongFromObjectOrReply(c, c->argv[2], &start, NULL) != C_OK) ||
         (getLongFromObjectOrReply(c, c->argv[3], &end, NULL) != C_OK)) return;
 
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.null[c->resp])) == NULL
          || checkType(c,o,OBJ_LIST)) return;
+         // 原长
     llen = listTypeLength(o);
 
     /* convert negative indexes */
@@ -480,6 +498,7 @@ void lrangeCommand(client *c) {
 
     /* Invariant: start >= 0, so this test will be true when end < 0.
      * The range is empty when start > end or start >= length. */
+    // 范围出错
     if (start > end || start >= llen) {
         addReplyNull(c);
         return;
@@ -488,31 +507,36 @@ void lrangeCommand(client *c) {
     rangelen = (end-start)+1;
 
     /* Return the result in form of a multi-bulk reply */
+    // 批量返回给客户端
     addReplyArrayLen(c,rangelen);
     if (o->encoding == OBJ_ENCODING_QUICKLIST) {
+        // 获取一个正向迭代器
         listTypeIterator *iter = listTypeInitIterator(o, start, LIST_TAIL);
-
+        // 开始遍历
         while(rangelen--) {
             listTypeEntry entry;
+            // 下一个元素
             listTypeNext(iter, &entry);
             quicklistEntry *qe = &entry.entry;
+            // 返回值
             if (qe->value) {
                 addReplyBulkCBuffer(c,qe->value,qe->sz);
             } else {
                 addReplyBulkLongLong(c,qe->longval);
             }
         }
+        // 释放迭代器
         listTypeReleaseIterator(iter);
     } else {
         serverPanic("List encoding is not QUICKLIST!");
     }
 }
 
-// TODO LTRIM KEY_NAME START STOP，对一个 list 进行修剪，保存区间中的数据，这里是右侧开区间
+// LTRIM KEY_NAME START STOP，对一个 list 进行修剪，保存区间中的数据，这里是右侧开区间
 void ltrimCommand(client *c) {
     robj *o;
     long start, end, llen, ltrim, rtrim;
-
+    // 一系列的区间处理
     if ((getLongFromObjectOrReply(c, c->argv[2], &start, NULL) != C_OK) ||
         (getLongFromObjectOrReply(c, c->argv[3], &end, NULL) != C_OK)) return;
 
@@ -539,23 +563,27 @@ void ltrimCommand(client *c) {
 
     /* Remove list elements to perform the trim */
     if (o->encoding == OBJ_ENCODING_QUICKLIST) {
+        // 删除范围外的数据，两端分别删除
         quicklistDelRange(o->ptr,0,ltrim);
         quicklistDelRange(o->ptr,-rtrim,rtrim);
     } else {
         serverPanic("Unknown list encoding");
     }
-
+    // 事件通知
     notifyKeyspaceEvent(NOTIFY_LIST,"ltrim",c->argv[1],c->db->id);
     if (listTypeLength(o) == 0) {
+        // 删除后数据为空，删除该数据
         dbDelete(c->db,c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_GENERIC,"del",c->argv[1],c->db->id);
     }
+    // 向数据库发送值变更通知
     signalModifiedKey(c->db,c->argv[1]);
     server.dirty++;
+    // 通知客户端
     addReply(c,shared.ok);
 }
 
-// TODO LREM KEY_NAME COUNT VALUE，移除 list 中的值 value
+// LREM KEY_NAME COUNT VALUE，移除 list 中的值 value
 // count > 0 从头开始移除 count 个 value
 // count < 0 从尾开始移除 -count 个 value
 // count == 0 移除所有 value
@@ -565,6 +593,7 @@ void lremCommand(client *c) {
     long toremove;
     long removed = 0;
 
+    // 获取 count 值
     if ((getLongFromObjectOrReply(c, c->argv[2], &toremove, NULL) != C_OK))
         return;
 
@@ -572,6 +601,7 @@ void lremCommand(client *c) {
     if (subject == NULL || checkType(c,subject,OBJ_LIST)) return;
 
     listTypeIterator *li;
+    // 从头或尾开始操作
     if (toremove < 0) {
         toremove = -toremove;
         li = listTypeInitIterator(subject,-1,LIST_HEAD);
@@ -580,26 +610,34 @@ void lremCommand(client *c) {
     }
 
     listTypeEntry entry;
+    // 存在下一个节点
     while (listTypeNext(li,&entry)) {
+        // 如果是该节点
         if (listTypeEqual(&entry,obj)) {
+            // 删除
             listTypeDelete(li, &entry);
             server.dirty++;
             removed++;
+            // 删除完成
             if (toremove && removed == toremove) break;
         }
     }
+    // 释放 iter
     listTypeReleaseIterator(li);
 
     if (removed) {
+        // 向数据库发送值更改消息
         signalModifiedKey(c->db,c->argv[1]);
+        // 事件通知
         notifyKeyspaceEvent(NOTIFY_GENERIC,"lrem",c->argv[1],c->db->id);
     }
 
     if (listTypeLength(subject) == 0) {
+        // 删除空白数据
         dbDelete(c->db,c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_GENERIC,"del",c->argv[1],c->db->id);
     }
-
+    // 告知客户端删除数据量
     addReplyLongLong(c,removed);
 }
 
@@ -618,23 +656,27 @@ void lremCommand(client *c) {
  * since the element is not just returned but pushed against another list
  * as well. This command was originally proposed by Ezra Zygmuntowicz.
  */
-// TODO 
+// RPOPLPUSH 操作的插入部分实现
 void rpoplpushHandlePush(client *c, robj *dstkey, robj *dstobj, robj *value) {
     /* Create the list if the key does not exist */
+    // list 不存在，创建
     if (!dstobj) {
         dstobj = createQuicklistObject();
         quicklistSetOptions(dstobj->ptr, server.list_max_ziplist_size,
                             server.list_compress_depth);
+        // 添加到 DB
         dbAdd(c->db,dstkey,dstobj);
     }
     signalModifiedKey(c->db,dstkey);
+    // 把 value 添加到 list 中
     listTypePush(dstobj,value,LIST_HEAD);
+    // 事件通知
     notifyKeyspaceEvent(NOTIFY_LIST,"lpush",dstkey,c->db->id);
     /* Always send the pushed value to the client. */
     addReplyBulk(c,value);
 }
 
-// TODO
+// RPOPLPUSH source destination，把 source 的尾元素，删除并添加到 destination 头部，并返回给客户端
 void rpoplpushCommand(client *c) {
     robj *sobj, *value;
     if ((sobj = lookupKeyWriteOrReply(c,c->argv[1],shared.null[c->resp]))
@@ -643,25 +685,30 @@ void rpoplpushCommand(client *c) {
     if (listTypeLength(sobj) == 0) {
         /* This may only happen after loading very old RDB files. Recent
          * versions of Redis delete keys of empty lists. */
+        // source list 为空，返回 NULL
         addReplyNull(c);
     } else {
         robj *dobj = lookupKeyWrite(c->db,c->argv[2]);
         robj *touchedkey = c->argv[1];
 
         if (dobj && checkType(c,dobj,OBJ_LIST)) return;
+        // Pop 尾节点
         value = listTypePop(sobj,LIST_TAIL);
         /* We saved touched key, and protect it, since rpoplpushHandlePush
          * may change the client command argument vector (it does not
          * currently). */
         incrRefCount(touchedkey);
+        // 添加到 destination 头部
         rpoplpushHandlePush(c,c->argv[2],dobj,value);
 
         /* listTypePop returns an object with its refcount incremented */
         decrRefCount(value);
 
         /* Delete the source list when it is empty */
+        // 事件通知
         notifyKeyspaceEvent(NOTIFY_LIST,"rpop",touchedkey,c->db->id);
         if (listTypeLength(sobj) == 0) {
+            // source 为空，进行删除
             dbDelete(c->db,touchedkey);
             notifyKeyspaceEvent(NOTIFY_GENERIC,"del",
                                 touchedkey,c->db->id);
@@ -678,7 +725,7 @@ void rpoplpushCommand(client *c) {
 /*-----------------------------------------------------------------------------
  * Blocking POP operations
  *----------------------------------------------------------------------------*/
-
+// 阻塞操作，就是当需要操作的 list 为空时，先将其加入列表中，并阻塞对应客户端，遍历阻塞列表，入到非空的 list 就开始执行操作
 /* This is a helper function for handleClientsBlockedOnLists(). It's work
  * is to serve a specific client (receiver) that is blocked on 'key'
  * in the context of the specified 'db', doing the following:
@@ -698,13 +745,22 @@ void rpoplpushCommand(client *c) {
  * should be undone as the client was not served: This only happens for
  * BRPOPLPUSH that fails to push the value to the destination key as it is
  * of the wrong type. */
-// TODO 服务器 block list？？？
+// 函数对被阻塞的客户端 receiver 、造成阻塞的 key 、 key 所在的数据库 db 以及一个值 value 和一个位置值 where 执行以下动作：
+// 1，将 value 提供给 receiver
+// 2，如果 dstkey 不为空（代表 list 数据进行了修改，对空表的修改就是添加）,将 value 推入到 dstkey 指定的列表中
+// 3，将 BRPOP，BLPOP 和可能有的 LPUSH 传播到 AOF 和同步节点
+// where 可能是 REDIS_TAIL 或者 REDIS_HEAD ，用于识别该 value 是从那个地方 POP 出来，依靠这个参数，可以同样传播 BLPOP 或者 BRPOP 。
+// 如果一切成功，返回 REDIS_OK 。
+// 如果执行失败，那么返回 REDIS_ERR ，让 Redis 撤销对目标节点的 POP 操作。
+// 失败的情况只会出现在 BRPOPLPUSH 命令中，
+// 比如 POP 列表成功，却发现想 PUSH 的目标不是列表时。
 int serveClientBlockedOnList(client *receiver, robj *key, robj *dstkey, redisDb *db, robj *value, int where)
 {
     robj *argv[3];
-
+    // 不是 BLPOPRPUSH ？
     if (dstkey == NULL) {
         /* Propagate the [LR]POP operation. */
+        // 传播到 Pop 操作
         argv[0] = (where == LIST_HEAD) ? shared.lpop :
                                           shared.rpop;
         argv[1] = key;
@@ -713,6 +769,7 @@ int serveClientBlockedOnList(client *receiver, robj *key, robj *dstkey, redisDb 
             db->id,argv,2,PROPAGATE_AOF|PROPAGATE_REPL);
 
         /* BRPOP/BLPOP */
+        // 回复客户端
         addReplyArrayLen(receiver,2);
         addReplyBulk(receiver,key);
         addReplyBulk(receiver,value);
@@ -722,21 +779,28 @@ int serveClientBlockedOnList(client *receiver, robj *key, robj *dstkey, redisDb 
         notifyKeyspaceEvent(NOTIFY_LIST,event,key,receiver->db->id);
     } else {
         /* BRPOPLPUSH */
+        // 获取 dstkey 对象
         robj *dstobj =
             lookupKeyWrite(receiver->db,dstkey);
+            // 可以进行操作
         if (!(dstobj &&
              checkType(receiver,dstobj,OBJ_LIST)))
         {
             /* Propagate the RPOP operation. */
+            // 传播 RPOP 操作
             argv[0] = shared.rpop;
             argv[1] = key;
             propagate(server.rpopCommand,
                 db->id,argv,2,
                 PROPAGATE_AOF|
                 PROPAGATE_REPL);
+            // 将 value 添加到 dstkey 列表里
+            // 如果 dstkey 不存在，那么创建一个新列表，
+            // 然后进行添加操作
             rpoplpushHandlePush(receiver,dstkey,dstobj,
                 value);
             /* Propagate the LPUSH operation. */
+            // 传播 LPUSH 操作
             argv[0] = shared.lpush;
             argv[1] = dstkey;
             argv[2] = value;
@@ -762,10 +826,11 @@ void blockingPopGenericCommand(client *c, int where) {
     robj *o;
     mstime_t timeout;
     int j;
-
+    // 获取 Timeout 参数
     if (getTimeoutFromObjectOrReply(c,c->argv[c->argc-1],&timeout,UNIT_SECONDS)
         != C_OK) return;
-
+    // 遍历所有 key 
+    // 如果找到第一个不为空的列表对象，那么对它进行 POP ，然后返回
     for (j = 1; j < c->argc-1; j++) {
         o = lookupKeyWrite(c->db,c->argv[j]);
         if (o != NULL) {
@@ -776,6 +841,7 @@ void blockingPopGenericCommand(client *c, int where) {
                 if (listTypeLength(o) != 0) {
                     /* Non empty list, this is like a non normal [LR]POP. */
                     char *event = (where == LIST_HEAD) ? "lpop" : "rpop";
+                    // 非空，执行 Pop
                     robj *value = listTypePop(o,where);
                     serverAssert(value != NULL);
 
@@ -785,6 +851,7 @@ void blockingPopGenericCommand(client *c, int where) {
                     decrRefCount(value);
                     notifyKeyspaceEvent(NOTIFY_LIST,event,
                                         c->argv[j],c->db->id);
+                    // 删除空 list
                     if (listTypeLength(o) == 0) {
                         dbDelete(c->db,c->argv[j]);
                         notifyKeyspaceEvent(NOTIFY_GENERIC,"del",
@@ -824,13 +891,13 @@ void brpopCommand(client *c) {
     blockingPopGenericCommand(c,LIST_TAIL);
 }
 
-// TODO BRPOPLPUSH LIST1 ANOTHER_LIST TIMEOUT，从 LIST1 弹出一个元素并插入到 ANOTHER_LIST 中
+// BRPOPLPUSH LIST1 ANOTHER_LIST TIMEOUT，从 LIST1 弹出一个元素并插入到 ANOTHER_LIST 中
 void brpoplpushCommand(client *c) {
     mstime_t timeout;
-
+    // 获取 timeout 参数
     if (getTimeoutFromObjectOrReply(c,c->argv[3],&timeout,UNIT_SECONDS)
         != C_OK) return;
-
+    // key 对象
     robj *key = lookupKeyWrite(c->db, c->argv[1]);
 
     if (key == NULL) {
@@ -840,6 +907,7 @@ void brpoplpushCommand(client *c) {
             addReplyNull(c);
         } else {
             /* The list is empty and the client blocks. */
+            // 等待元素 push 到 key
             blockForKeys(c,BLOCKED_LIST,c->argv + 1,1,timeout,c->argv[2],NULL);
         }
     } else {
