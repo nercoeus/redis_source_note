@@ -729,11 +729,13 @@ dictType replScriptCacheDictType = {
     NULL                        /* val destructor */
 };
 
+// 判断 dict 是否需要重新分配大小
 int htNeedsResize(dict *dict) {
     long long size, used;
 
     size = dictSlots(dict);
     used = dictSize(dict);
+    // 大于默认桶大小，且比值小于 0.1，缩小
     return (size > DICT_HT_INITIAL_SIZE &&
             (used*100/size < HASHTABLE_MIN_FILL));
 }

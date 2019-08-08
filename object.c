@@ -260,7 +260,7 @@ robj *createZiplistObject(void) {
     return o;
 }
 
-// 创建 Set 的 robj（使用 dict 实现的 set）
+// 创建 Set 的 robj（使用 dict 实现的 Set）
 robj *createSetObject(void) {
     dict *d = dictCreate(&setDictType,NULL);
     // 对象类型为 SET
@@ -270,7 +270,7 @@ robj *createSetObject(void) {
     return o;
 }
 
-// 创建 IntSet 的 robj（使用 IntSet 实现的 IntSet）
+// 创建 Set 的 robj（使用 IntSet 实现的 Set）
 robj *createIntsetObject(void) {
     intset *is = intsetNew();
     //  对象类型为 SET
