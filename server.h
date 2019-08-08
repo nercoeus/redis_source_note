@@ -1245,8 +1245,8 @@ struct redisServer {
     int sort_bypattern;
     int sort_store;
     /* Zip structure config, see redis.conf for more information  */
-    size_t hash_max_ziplist_entries;
-    size_t hash_max_ziplist_value;
+    size_t hash_max_ziplist_entries; // ziplist 中最多能存放的 entry 节点数量
+    size_t hash_max_ziplist_value;   // ziplist 中最大能存放的值长度
     size_t set_max_intset_entries;
     size_t zset_max_ziplist_entries;
     size_t zset_max_ziplist_value;
@@ -1400,14 +1400,15 @@ typedef struct {
  * hashes involves both fields and values. Because it is possible that
  * not both are required, store pointers in the iterator to avoid
  * unnecessary memory allocation for fields/values. */
+ // hash 的迭代器
 typedef struct {
-    robj *subject;
-    int encoding;
+    robj *subject;  // 指向的 hash 对象
+    int encoding;   // 实现方式
 
-    unsigned char *fptr, *vptr;
+    unsigned char *fptr, *vptr;  // 如果 ziplist 实现，键值对指针
 
-    dictIterator *di;
-    dictEntry *de;
+    dictIterator *di;  // 如果是 dict 实现，对应的迭代器
+    dictEntry *de;     // dict 元素
 } hashTypeIterator;
 
 #include "stream.h"  /* Stream data type header file. */

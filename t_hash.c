@@ -37,15 +37,17 @@
 /* Check the length of a number of objects to see if we need to convert a
  * ziplist to a real hash. Note that we only check string encoded objects
  * as their string length can be queried in constant time. */
+// 检测对象长度，将需要的转换为 hashtable 仅检查 string（OBJ_ENCODING_RAW OBJ_ENCODING_EMBSTR）类型对象，因为可以在特定时间获取长度
 void hashTypeTryConversion(robj *o, robj **argv, int start, int end) {
     int i;
-
+    // 仅仅对 ziplist 进行转换
     if (o->encoding != OBJ_ENCODING_ZIPLIST) return;
-
+    // 遍历命令中的一个参数范围
     for (i = start; i <= end; i++) {
         if (sdsEncodedObject(argv[i]) &&
             sdslen(argv[i]->ptr) > server.hash_max_ziplist_value)
         {
+            // 把 o 转换为 hash table
             hashTypeConvert(o, OBJ_ENCODING_HT);
             break;
         }
@@ -54,6 +56,7 @@ void hashTypeTryConversion(robj *o, robj **argv, int start, int end) {
 
 /* Get the value from a ziplist encoded hash, identified by field.
  * Returns -1 when the field cannot be found. */
+// 从 ziplist 编码的 hash 获得 value
 int hashTypeGetFromZiplist(robj *o, sds field,
                            unsigned char **vstr,
                            unsigned int *vlen,
@@ -61,21 +64,25 @@ int hashTypeGetFromZiplist(robj *o, sds field,
 {
     unsigned char *zl, *fptr = NULL, *vptr = NULL;
     int ret;
-
+    // 该操作仅针对 ziplist 底层实现
     serverAssert(o->encoding == OBJ_ENCODING_ZIPLIST);
 
     zl = o->ptr;
+    // 获取头部数据
     fptr = ziplistIndex(zl, ZIPLIST_HEAD);
     if (fptr != NULL) {
+        // 在 ziplist 中查找值，注意最后一个参数是 1，这样在 find 的内部实现不会进行跳跃
         fptr = ziplistFind(fptr, (unsigned char*)field, sdslen(field), 1);
         if (fptr != NULL) {
             /* Grab pointer to the value (fptr points to the field) */
+            // 获取指向值的指针，fptr 指向的是字段
             vptr = ziplistNext(zl, fptr);
             serverAssert(vptr != NULL);
         }
     }
 
     if (vptr != NULL) {
+        // 获取数据
         ret = ziplistGet(vptr, vstr, vlen, vll);
         serverAssert(ret);
         return 0;
@@ -87,13 +94,15 @@ int hashTypeGetFromZiplist(robj *o, sds field,
 /* Get the value from a hash table encoded hash, identified by field.
  * Returns NULL when the field cannot be found, otherwise the SDS value
  * is returned. */
+// 从 hashtable 编码的 hash 中获取一个值
 sds hashTypeGetFromHashTable(robj *o, sds field) {
     dictEntry *de;
 
     serverAssert(o->encoding == OBJ_ENCODING_HT);
-
+    // 使用 bh find 函数进行查找
     de = dictFind(o->ptr, field);
     if (de == NULL) return NULL;
+    // 获取值 sds 类型
     return dictGetVal(de);
 }
 
@@ -106,14 +115,20 @@ sds hashTypeGetFromHashTable(robj *o, sds field) {
  * If *vll is populated *vstr is set to NULL, so the caller
  * can always check the function return by checking the return value
  * for C_OK and checking if vll (or vstr) is NULL. */
+// 在 hash 中获取值
 int hashTypeGetValue(robj *o, sds field, unsigned char **vstr, unsigned int *vlen, long long *vll) {
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
+        // ziplist 编码
         *vstr = NULL;
+        // 调用 hashTypeGetFromZiplist()
         if (hashTypeGetFromZiplist(o, field, vstr, vlen, vll) == 0)
             return C_OK;
     } else if (o->encoding == OBJ_ENCODING_HT) {
+        // ht 编码
         sds value;
+        // 调用 hashTypeGetFromHashTable(）
         if ((value = hashTypeGetFromHashTable(o, field)) != NULL) {
+            // 返回的是 sds 类型
             *vstr = (unsigned char*) value;
             *vlen = sdslen(value);
             return C_OK;
@@ -128,12 +143,14 @@ int hashTypeGetValue(robj *o, sds field, unsigned char **vstr, unsigned int *vle
  * interaction with the hash type outside t_hash.c.
  * The function returns NULL if the field is not found in the hash. Otherwise
  * a newly allocated string object with the value is returned. */
+// 类似 hashTypeGetValue()，不同的是返回一个 object
 robj *hashTypeGetValueObject(robj *o, sds field) {
     unsigned char *vstr;
     unsigned int vlen;
     long long vll;
-
+    // 先获取值
     if (hashTypeGetValue(o,field,&vstr,&vlen,&vll) == C_ERR) return NULL;
+    // 判断创建 string 类型还是 longlong 类型
     if (vstr) return createStringObject((char*)vstr,vlen);
     else return createStringObjectFromLongLong(vll);
 }
@@ -141,6 +158,7 @@ robj *hashTypeGetValueObject(robj *o, sds field) {
 /* Higher level function using hashTypeGet*() to return the length of the
  * object associated with the requested field, or 0 if the field does not
  * exist. */
+// 返回长度
 size_t hashTypeGetValueLength(robj *o, sds field) {
     size_t len = 0;
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
@@ -149,11 +167,13 @@ size_t hashTypeGetValueLength(robj *o, sds field) {
         long long vll = LLONG_MAX;
 
         if (hashTypeGetFromZiplist(o, field, &vstr, &vlen, &vll) == 0)
+        // 获取成功，返回长度
             len = vstr ? vlen : sdigits10(vll);
     } else if (o->encoding == OBJ_ENCODING_HT) {
         sds aux;
 
         if ((aux = hashTypeGetFromHashTable(o, field)) != NULL)
+        // 获取 sds 直接返回 length
             len = sdslen(aux);
     } else {
         serverPanic("Unknown hash encoding");
@@ -163,6 +183,7 @@ size_t hashTypeGetValueLength(robj *o, sds field) {
 
 /* Test if the specified field exists in the given hash. Returns 1 if the field
  * exists, and 0 when it doesn't. */
+// 判断值是否存在，还是用的 getvalue 上面几个函数
 int hashTypeExists(robj *o, sds field) {
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
         unsigned char *vstr = NULL;
@@ -196,29 +217,36 @@ int hashTypeExists(robj *o, sds field) {
  * semantics of copying the values if needed.
  *
  */
-#define HASH_SET_TAKE_FIELD (1<<0)
-#define HASH_SET_TAKE_VALUE (1<<1)
+#define HASH_SET_TAKE_FIELD (1<<0)    // sds filed 所有权交给了函数，使用完需要 null 一下
+#define HASH_SET_TAKE_VALUE (1<<1)    // sds value 所有权交给了函数，使用完需要 null 一下
 #define HASH_SET_COPY 0
+// 设置值，有就行修改，没有就添加
 int hashTypeSet(robj *o, sds field, sds value, int flags) {
     int update = 0;
 
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
+        // 对 ziplist 进行操作
         unsigned char *zl, *fptr, *vptr;
 
         zl = o->ptr;
+        // 从开头进行查找
         fptr = ziplistIndex(zl, ZIPLIST_HEAD);
         if (fptr != NULL) {
+            // 找到对应 field 位置
             fptr = ziplistFind(fptr, (unsigned char*)field, sdslen(field), 1);
             if (fptr != NULL) {
                 /* Grab pointer to the value (fptr points to the field) */
+                // 获取 value pointer
                 vptr = ziplistNext(zl, fptr);
                 serverAssert(vptr != NULL);
                 update = 1;
 
                 /* Delete value */
+                // 删除该值
                 zl = ziplistDelete(zl, &vptr);
 
                 /* Insert new value */
+                // 插入新值
                 zl = ziplistInsert(zl, vptr, (unsigned char*)value,
                         sdslen(value));
             }
@@ -226,6 +254,7 @@ int hashTypeSet(robj *o, sds field, sds value, int flags) {
 
         if (!update) {
             /* Push new field/value pair onto the tail of the ziplist */
+            // 没有插入的话，将 字段/值 对 push 到末尾
             zl = ziplistPush(zl, (unsigned char*)field, sdslen(field),
                     ZIPLIST_TAIL);
             zl = ziplistPush(zl, (unsigned char*)value, sdslen(value),
@@ -234,20 +263,27 @@ int hashTypeSet(robj *o, sds field, sds value, int flags) {
         o->ptr = zl;
 
         /* Check if the ziplist needs to be converted to a hash table */
+        // 插入后的 ziplist 太大了，进行转换成 ht
         if (hashTypeLength(o) > server.hash_max_ziplist_entries)
             hashTypeConvert(o, OBJ_ENCODING_HT);
     } else if (o->encoding == OBJ_ENCODING_HT) {
+        // ht 中的 set 操作
+        // 找到对应的 field 元素
         dictEntry *de = dictFind(o->ptr,field);
         if (de) {
+            // 直接释放掉了
             sdsfree(dictGetVal(de));
             if (flags & HASH_SET_TAKE_VALUE) {
+                // 设置值
                 dictGetVal(de) = value;
                 value = NULL;
             } else {
+                // 包装成 sds 再进行 set
                 dictGetVal(de) = sdsdup(value);
             }
             update = 1;
         } else {
+            // 没有该元素
             sds f,v;
             if (flags & HASH_SET_TAKE_FIELD) {
                 f = field;
@@ -261,6 +297,7 @@ int hashTypeSet(robj *o, sds field, sds value, int flags) {
             } else {
                 v = sdsdup(value);
             }
+            // 增加节点
             dictAdd(o->ptr,f,v);
         }
     } else {
@@ -269,6 +306,7 @@ int hashTypeSet(robj *o, sds field, sds value, int flags) {
 
     /* Free SDS strings we did not referenced elsewhere if the flags
      * want this function to be responsible. */
+    // 该函数有这两个值的所有权，需要 free
     if (flags & HASH_SET_TAKE_FIELD && field) sdsfree(field);
     if (flags & HASH_SET_TAKE_VALUE && value) sdsfree(value);
     return update;
@@ -276,17 +314,22 @@ int hashTypeSet(robj *o, sds field, sds value, int flags) {
 
 /* Delete an element from a hash.
  * Return 1 on deleted and 0 on not found. */
+// 根据 field 删除 键值对
 int hashTypeDelete(robj *o, sds field) {
     int deleted = 0;
 
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
+        // ziplist 的 delete 操作
         unsigned char *zl, *fptr;
 
         zl = o->ptr;
+        // 日常 find
         fptr = ziplistIndex(zl, ZIPLIST_HEAD);
         if (fptr != NULL) {
+            // 找到对应的 field
             fptr = ziplistFind(fptr, (unsigned char*)field, sdslen(field), 1);
             if (fptr != NULL) {
+                // 删除键值对
                 zl = ziplistDelete(zl,&fptr); /* Delete the key. */
                 zl = ziplistDelete(zl,&fptr); /* Delete the value. */
                 o->ptr = zl;
@@ -294,10 +337,12 @@ int hashTypeDelete(robj *o, sds field) {
             }
         }
     } else if (o->encoding == OBJ_ENCODING_HT) {
+        // ht 对应的 delete 操作，直接调用 dict 的函数即可，底层就是键值对实现的
         if (dictDelete((dict*)o->ptr, field) == C_OK) {
             deleted = 1;
 
             /* Always check if the dictionary needs a resize after a delete. */
+            // 判断字典是否需要调整大小
             if (htNeedsResize(o->ptr)) dictResize(o->ptr);
         }
 
@@ -308,12 +353,15 @@ int hashTypeDelete(robj *o, sds field) {
 }
 
 /* Return the number of elements in a hash. */
+// 返回 list 的 length
 unsigned long hashTypeLength(const robj *o) {
     unsigned long length = ULONG_MAX;
 
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
+        // ziplist 实现需要除 2，因为键和值存储在一起
         length = ziplistLen(o->ptr) / 2;
     } else if (o->encoding == OBJ_ENCODING_HT) {
+        // dict 就不需要了，直接返回 length 即可
         length = dictSize((const dict*)o->ptr);
     } else {
         serverPanic("Unknown hash encoding");
@@ -321,15 +369,20 @@ unsigned long hashTypeLength(const robj *o) {
     return length;
 }
 
+// 初始化 hash 的迭代器
 hashTypeIterator *hashTypeInitIterator(robj *subject) {
+    // 分配空间
     hashTypeIterator *hi = zmalloc(sizeof(hashTypeIterator));
+    // 基本设置
     hi->subject = subject;
     hi->encoding = subject->encoding;
 
     if (hi->encoding == OBJ_ENCODING_ZIPLIST) {
+        // ziplist 底层实现迭代器初始化
         hi->fptr = NULL;
         hi->vptr = NULL;
     } else if (hi->encoding == OBJ_ENCODING_HT) {
+        // dict 底层实现迭代器初始化，就设置 di 参数即可
         hi->di = dictGetIterator(subject->ptr);
     } else {
         serverPanic("Unknown hash encoding");
@@ -337,42 +390,52 @@ hashTypeIterator *hashTypeInitIterator(robj *subject) {
     return hi;
 }
 
+// 释放迭代器
 void hashTypeReleaseIterator(hashTypeIterator *hi) {
     if (hi->encoding == OBJ_ENCODING_HT)
+    // dict 实现的话，包装的是 dict 的迭代器，需要释放
         dictReleaseIterator(hi->di);
     zfree(hi);
 }
 
 /* Move to the next entry in the hash. Return C_OK when the next entry
  * could be found and C_ERR when the iterator reaches the end. */
+// 下一个节点
 int hashTypeNext(hashTypeIterator *hi) {
     if (hi->encoding == OBJ_ENCODING_ZIPLIST) {
+        // ziplist 实现要负责一些
         unsigned char *zl;
         unsigned char *fptr, *vptr;
 
         zl = hi->subject->ptr;
+        // 获取当前键值对
         fptr = hi->fptr;
         vptr = hi->vptr;
 
         if (fptr == NULL) {
             /* Initialize cursor */
+            // field 为空，设为头节点
             serverAssert(vptr == NULL);
             fptr = ziplistIndex(zl, 0);
         } else {
             /* Advance cursor */
             serverAssert(vptr != NULL);
+            // 寻找下一个节点的 fiels
             fptr = ziplistNext(zl, vptr);
         }
         if (fptr == NULL) return C_ERR;
 
         /* Grab pointer to the value (fptr points to the field) */
+        // 下一个节点的 value
         vptr = ziplistNext(zl, fptr);
         serverAssert(vptr != NULL);
 
         /* fptr, vptr now point to the first or next pair */
+        // 保存到迭代器即可
         hi->fptr = fptr;
         hi->vptr = vptr;
     } else if (hi->encoding == OBJ_ENCODING_HT) {
+        // dict 实现的就方便许多
         if ((hi->de = dictNext(hi->di)) == NULL) return C_ERR;
     } else {
         serverPanic("Unknown hash encoding");
@@ -382,6 +445,7 @@ int hashTypeNext(hashTypeIterator *hi) {
 
 /* Get the field or value at iterator cursor, for an iterator on a hash value
  * encoded as a ziplist. Prototype is similar to `hashTypeGetFromZiplist`. */
+// 对 ziplist 实现对象获取 键 或 值，通过 what 进行区分
 void hashTypeCurrentFromZiplist(hashTypeIterator *hi, int what,
                                 unsigned char **vstr,
                                 unsigned int *vlen,
@@ -392,9 +456,11 @@ void hashTypeCurrentFromZiplist(hashTypeIterator *hi, int what,
     serverAssert(hi->encoding == OBJ_ENCODING_ZIPLIST);
 
     if (what & OBJ_HASH_KEY) {
+        // 获取键
         ret = ziplistGet(hi->fptr, vstr, vlen, vll);
         serverAssert(ret);
     } else {
+        // 获取值
         ret = ziplistGet(hi->vptr, vstr, vlen, vll);
         serverAssert(ret);
     }
@@ -403,6 +469,7 @@ void hashTypeCurrentFromZiplist(hashTypeIterator *hi, int what,
 /* Get the field or value at iterator cursor, for an iterator on a hash value
  * encoded as a hash table. Prototype is similar to
  * `hashTypeGetFromHashTable`. */
+// 对 dict 实现对象获取 键 或 值，通过 what 进行区分
 sds hashTypeCurrentFromHashTable(hashTypeIterator *hi, int what) {
     serverAssert(hi->encoding == OBJ_ENCODING_HT);
 
@@ -423,6 +490,7 @@ sds hashTypeCurrentFromHashTable(hashTypeIterator *hi, int what) {
  * If *vll is populated *vstr is set to NULL, so the caller
  * can always check the function return by checking the return value
  * type checking if vstr == NULL. */
+// 对 hash 对象获取 键 或 值，通过 what 进行区分
 void hashTypeCurrentObject(hashTypeIterator *hi, int what, unsigned char **vstr, unsigned int *vlen, long long *vll) {
     if (hi->encoding == OBJ_ENCODING_ZIPLIST) {
         *vstr = NULL;
@@ -438,19 +506,24 @@ void hashTypeCurrentObject(hashTypeIterator *hi, int what, unsigned char **vstr,
 
 /* Return the key or value at the current iterator position as a new
  * SDS string. */
+// 获取 键 或 值 用 sds 对象进行返回
 sds hashTypeCurrentObjectNewSds(hashTypeIterator *hi, int what) {
     unsigned char *vstr;
     unsigned int vlen;
     long long vll;
 
     hashTypeCurrentObject(hi,what,&vstr,&vlen,&vll);
+    // 将获取的值进行包装返回
     if (vstr) return sdsnewlen(vstr,vlen);
     return sdsfromlonglong(vll);
 }
 
+// 按 key 查找 hash 对象，如果不存在，创建一个新对象进行返回
 robj *hashTypeLookupWriteOrCreate(client *c, robj *key) {
+    // 在数据库中进行查找
     robj *o = lookupKeyWrite(c->db,key);
     if (o == NULL) {
+        // 不存在则创建一个新 hash
         o = createHashObject();
         dbAdd(c->db,key,o);
     } else {
@@ -462,6 +535,7 @@ robj *hashTypeLookupWriteOrCreate(client *c, robj *key) {
     return o;
 }
 
+// 将一个 ziplist 编码的 hash 对象转换成其他编码
 void hashTypeConvertZiplist(robj *o, int enc) {
     serverAssert(o->encoding == OBJ_ENCODING_ZIPLIST);
 
@@ -469,18 +543,21 @@ void hashTypeConvertZiplist(robj *o, int enc) {
         /* Nothing to do... */
 
     } else if (enc == OBJ_ENCODING_HT) {
+        // 转化成 dict
         hashTypeIterator *hi;
         dict *dict;
         int ret;
-
+        // 创建 hash 迭代器
         hi = hashTypeInitIterator(o);
+        // 创建一个 dict
         dict = dictCreate(&hashDictType, NULL);
-
+        // 遍历整个 ziplist
         while (hashTypeNext(hi) != C_ERR) {
             sds key, value;
-
+            // 获取键值对的 sds 对象
             key = hashTypeCurrentObjectNewSds(hi,OBJ_HASH_KEY);
             value = hashTypeCurrentObjectNewSds(hi,OBJ_HASH_VALUE);
+            // 添加到 dict 中
             ret = dictAdd(dict, key, value);
             if (ret != DICT_OK) {
                 serverLogHexDump(LL_WARNING,"ziplist with dup elements dump",
@@ -488,8 +565,11 @@ void hashTypeConvertZiplist(robj *o, int enc) {
                 serverPanic("Ziplist corruption detected");
             }
         }
+        // 释放迭代器
         hashTypeReleaseIterator(hi);
+        // 释放原数据
         zfree(o->ptr);
+        // 设置新数据以及编码方式
         o->encoding = OBJ_ENCODING_HT;
         o->ptr = dict;
     } else {
@@ -497,6 +577,7 @@ void hashTypeConvertZiplist(robj *o, int enc) {
     }
 }
 
+// 转换编码方式，仅支持从 ziplist 到 dict，其余情况均报错
 void hashTypeConvert(robj *o, int enc) {
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
         hashTypeConvertZiplist(o, enc);
@@ -511,11 +592,12 @@ void hashTypeConvert(robj *o, int enc) {
  * Hash type commands
  *----------------------------------------------------------------------------*/
 
+// HSETNX KEY_NAME FIELD VALUE 命令，
 void hsetnxCommand(client *c) {
     robj *o;
     if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
     hashTypeTryConversion(o,c->argv,2,3);
-
+    // 不存在进行添加
     if (hashTypeExists(o, c->argv[2]->ptr)) {
         addReply(c, shared.czero);
     } else {
