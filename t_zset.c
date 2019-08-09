@@ -815,6 +815,7 @@ zskiplistNode *zslLastInLexRange(zskiplist *zsl, zlexrangespec *range) {
  * Ziplist-backed sorted set API
  *----------------------------------------------------------------------------*/
 
+// 取出 sptr 所指向的 ziplist 节点的 score 值
 double zzlGetScore(unsigned char *sptr) {
     unsigned char *vstr;
     unsigned int vlen;
@@ -826,8 +827,10 @@ double zzlGetScore(unsigned char *sptr) {
     serverAssert(ziplistGet(sptr,&vstr,&vlen,&vlong));
 
     if (vstr) {
+        // 特别大的数，大于 longlong，或者浮点数
         memcpy(buf,vstr,vlen);
         buf[vlen] = '\0';
+        // 转换成 double 返回
         score = strtod(buf,NULL);
     } else {
         score = vlong;
@@ -837,6 +840,7 @@ double zzlGetScore(unsigned char *sptr) {
 }
 
 /* Return a ziplist element as an SDS string. */
+// 用 sds 对象来返回 ziplist 元素
 sds ziplistGetObject(unsigned char *sptr) {
     unsigned char *vstr;
     unsigned int vlen;
@@ -853,88 +857,103 @@ sds ziplistGetObject(unsigned char *sptr) {
 }
 
 /* Compare element in sorted set with given element. */
+// 比较 eptr 节点保存的值和 cstr
 int zzlCompareElements(unsigned char *eptr, unsigned char *cstr, unsigned int clen) {
     unsigned char *vstr;
     unsigned int vlen;
     long long vlong;
     unsigned char vbuf[32];
     int minlen, cmp;
-
+    // 获取 eptr 保存的值
     serverAssert(ziplistGet(eptr,&vstr,&vlen,&vlong));
     if (vstr == NULL) {
         /* Store string representation of long long in buf. */
+        // 节点保存的是数值，转换成 string 进行比较
         vlen = ll2string((char*)vbuf,sizeof(vbuf),vlong);
         vstr = vbuf;
     }
-
+    // 比较较小长度
     minlen = (vlen < clen) ? vlen : clen;
     cmp = memcmp(vstr,cstr,minlen);
     if (cmp == 0) return vlen-clen;
     return cmp;
 }
 
+// 返回 ziplist 实现的 有序集 length
 unsigned int zzlLength(unsigned char *zl) {
+    // / 2 是因为键值放在一起
     return ziplistLen(zl)/2;
 }
 
 /* Move to next entry based on the values in eptr and sptr. Both are set to
  * NULL when there is no next entry. */
+// 移动到下一个节点，eptr 指向 member，sptr 指向 score，遍历完返回 NULL
 void zzlNext(unsigned char *zl, unsigned char **eptr, unsigned char **sptr) {
     unsigned char *_eptr, *_sptr;
     serverAssert(*eptr != NULL && *sptr != NULL);
-
+    // 指向下一个 member
     _eptr = ziplistNext(zl,*sptr);
     if (_eptr != NULL) {
+        // 指向下一个 score
         _sptr = ziplistNext(zl,_eptr);
         serverAssert(_sptr != NULL);
     } else {
         /* No next entry. */
         _sptr = NULL;
     }
-
+    // 赋值
     *eptr = _eptr;
     *sptr = _sptr;
 }
 
 /* Move to the previous entry based on the values in eptr and sptr. Both are
  * set to NULL when there is no next entry. */
+// 移动到前一个节点，eptr 指向 member，sptr 指向 score，遍历完返回 NULL
 void zzlPrev(unsigned char *zl, unsigned char **eptr, unsigned char **sptr) {
     unsigned char *_eptr, *_sptr;
     serverAssert(*eptr != NULL && *sptr != NULL);
-
+    // 指向前一个 score
     _sptr = ziplistPrev(zl,*eptr);
     if (_sptr != NULL) {
+        // 指向前一个 member
         _eptr = ziplistPrev(zl,_sptr);
         serverAssert(_eptr != NULL);
     } else {
         /* No previous entry. */
         _eptr = NULL;
     }
-
+    // 赋值
     *eptr = _eptr;
     *sptr = _sptr;
 }
 
 /* Returns if there is a part of the zset is in range. Should only be used
  * internally by zzlFirstInRange and zzlLastInRange. */
+// 检查有序集的 score 值是否在给定范围内，可以了解到 score 是从小到大的
 int zzlIsInRange(unsigned char *zl, zrangespec *range) {
     unsigned char *p;
     double score;
 
     /* Test for ranges that will always be empty. */
+    // 保证 range 范围正确
     if (range->min > range->max ||
             (range->min == range->max && (range->minex || range->maxex)))
         return 0;
-
+    // 指向最后一个节点的 score
     p = ziplistIndex(zl,-1); /* Last score. */
+    // 空有序集
     if (p == NULL) return 0; /* Empty sorted set */
+    // 获得值
     score = zzlGetScore(p);
+    // 判断左边界
     if (!zslValueGteMin(score,range))
         return 0;
-
+    // 获取第一个节点的 score
     p = ziplistIndex(zl,1); /* First score. */
     serverAssert(p != NULL);
+    // 获取值
     score = zzlGetScore(p);
+    // 判断右边界
     if (!zslValueLteMax(score,range))
         return 0;
 
@@ -943,18 +962,22 @@ int zzlIsInRange(unsigned char *zl, zrangespec *range) {
 
 /* Find pointer to the first element contained in the specified range.
  * Returns NULL when no element is contained in the range. */
+// 获取第一个 score 在范围中的节点，没有返回 NULL
 unsigned char *zzlFirstInRange(unsigned char *zl, zrangespec *range) {
     unsigned char *eptr = ziplistIndex(zl,0), *sptr;
     double score;
 
     /* If everything is out of range, return early. */
+    // 所有节点都不在，返回 NULL
     if (!zzlIsInRange(zl,range)) return NULL;
 
     while (eptr != NULL) {
+        // 获取对应的 score
         sptr = ziplistNext(zl,eptr);
         serverAssert(sptr != NULL);
-
+        // 获取值
         score = zzlGetScore(sptr);
+        // 判断是否在区间中
         if (zslValueGteMin(score,range)) {
             /* Check if score <= max. */
             if (zslValueLteMax(score,range))
@@ -963,6 +986,7 @@ unsigned char *zzlFirstInRange(unsigned char *zl, zrangespec *range) {
         }
 
         /* Move to next element. */
+        // 下一个节点
         eptr = ziplistNext(zl,sptr);
     }
 
@@ -971,18 +995,22 @@ unsigned char *zzlFirstInRange(unsigned char *zl, zrangespec *range) {
 
 /* Find pointer to the last element contained in the specified range.
  * Returns NULL when no element is contained in the range. */
+// 获取最后一个 score 在范围中的节点，没有返回 NULL
 unsigned char *zzlLastInRange(unsigned char *zl, zrangespec *range) {
     unsigned char *eptr = ziplistIndex(zl,-2), *sptr;
     double score;
 
     /* If everything is out of range, return early. */
+    // 所有节点都不在范围内
     if (!zzlIsInRange(zl,range)) return NULL;
 
     while (eptr != NULL) {
+        // 从后向前进行遍历
         sptr = ziplistNext(zl,eptr);
         serverAssert(sptr != NULL);
 
         score = zzlGetScore(sptr);
+        // 范围边界比较
         if (zslValueLteMax(score,range)) {
             /* Check if score >= min. */
             if (zslValueGteMin(score,range))
@@ -1002,15 +1030,21 @@ unsigned char *zzlLastInRange(unsigned char *zl, zrangespec *range) {
     return NULL;
 }
 
+// 判断是否大于范围的左边界
 int zzlLexValueGteMin(unsigned char *p, zlexrangespec *spec) {
+    // 获取对应 sds object
     sds value = ziplistGetObject(p);
+    // 判断 value 是否大于范围的最小值
     int res = zslLexValueGteMin(value,spec);
     sdsfree(value);
     return res;
 }
 
+// 判断是否小于范围的右边界
 int zzlLexValueLteMax(unsigned char *p, zlexrangespec *spec) {
+    // 获取对应 sds object
     sds value = ziplistGetObject(p);
+    // 判断 value 是否小于范围的最大值
     int res = zslLexValueLteMax(value,spec);
     sdsfree(value);
     return res;
@@ -1018,21 +1052,25 @@ int zzlLexValueLteMax(unsigned char *p, zlexrangespec *spec) {
 
 /* Returns if there is a part of the zset is in range. Should only be used
  * internally by zzlFirstInRange and zzlLastInRange. */
+// 仅由 zzlFirstInRange 和 zzlLastInRange 调用，判断是否在范围内存在节点
 int zzlIsInLexRange(unsigned char *zl, zlexrangespec *range) {
     unsigned char *p;
 
     /* Test for ranges that will always be empty. */
+    // 判断范围不为空
     int cmp = sdscmplex(range->min,range->max);
     if (cmp > 0 || (cmp == 0 && (range->minex || range->maxex)))
         return 0;
-
+    // 最后一个节点的 member
     p = ziplistIndex(zl,-2); /* Last element. */
     if (p == NULL) return 0;
+    // 比较左边界
     if (!zzlLexValueGteMin(p,range))
         return 0;
 
     p = ziplistIndex(zl,0); /* First element. */
     serverAssert(p != NULL);
+    // 比较右边界
     if (!zzlLexValueLteMax(p,range))
         return 0;
 
@@ -1041,13 +1079,17 @@ int zzlIsInLexRange(unsigned char *zl, zlexrangespec *range) {
 
 /* Find pointer to the first element contained in the specified lex range.
  * Returns NULL when no element is contained in the range. */
+// member 在范围内的第一个节点
 unsigned char *zzlFirstInLexRange(unsigned char *zl, zlexrangespec *range) {
+    // 从头开始遍历
     unsigned char *eptr = ziplistIndex(zl,0), *sptr;
 
     /* If everything is out of range, return early. */
+    // 都不在范围内
     if (!zzlIsInLexRange(zl,range)) return NULL;
 
     while (eptr != NULL) {
+        // 进行判断
         if (zzlLexValueGteMin(eptr,range)) {
             /* Check if score <= max. */
             if (zzlLexValueLteMax(eptr,range))
@@ -1056,6 +1098,7 @@ unsigned char *zzlFirstInLexRange(unsigned char *zl, zlexrangespec *range) {
         }
 
         /* Move to next element. */
+        // 下一个元素
         sptr = ziplistNext(zl,eptr); /* This element score. Skip it. */
         serverAssert(sptr != NULL);
         eptr = ziplistNext(zl,sptr); /* Next element. */
@@ -1066,13 +1109,16 @@ unsigned char *zzlFirstInLexRange(unsigned char *zl, zlexrangespec *range) {
 
 /* Find pointer to the last element contained in the specified lex range.
  * Returns NULL when no element is contained in the range. */
+// 在范围中的最后一个节点
 unsigned char *zzlLastInLexRange(unsigned char *zl, zlexrangespec *range) {
     unsigned char *eptr = ziplistIndex(zl,-2), *sptr;
 
     /* If everything is out of range, return early. */
+    // 都不在范围中
     if (!zzlIsInLexRange(zl,range)) return NULL;
 
     while (eptr != NULL) {
+        // 左右边界判断
         if (zzlLexValueLteMax(eptr,range)) {
             /* Check if score >= min. */
             if (zzlLexValueGteMin(eptr,range))
@@ -1082,6 +1128,7 @@ unsigned char *zzlLastInLexRange(unsigned char *zl, zlexrangespec *range) {
 
         /* Move to previous element by moving to the score of previous element.
          * When this returns NULL, we know there also is no element. */
+        // 向前遍历
         sptr = ziplistPrev(zl,eptr);
         if (sptr != NULL)
             serverAssert((eptr = ziplistPrev(zl,sptr)) != NULL);
@@ -1092,15 +1139,17 @@ unsigned char *zzlLastInLexRange(unsigned char *zl, zlexrangespec *range) {
     return NULL;
 }
 
+// 查找节点，并返回 member 指针
 unsigned char *zzlFind(unsigned char *zl, sds ele, double *score) {
     unsigned char *eptr = ziplistIndex(zl,0), *sptr;
 
     while (eptr != NULL) {
         sptr = ziplistNext(zl,eptr);
         serverAssert(sptr != NULL);
-
+        // 进行比较
         if (ziplistCompare(eptr,(unsigned char*)ele,sdslen(ele))) {
             /* Matching element, pull out score. */
+            // 比较节点 score
             if (score != NULL) *score = zzlGetScore(sptr);
             return eptr;
         }
@@ -1113,33 +1162,40 @@ unsigned char *zzlFind(unsigned char *zl, sds ele, double *score) {
 
 /* Delete (element,score) pair from ziplist. Use local copy of eptr because we
  * don't want to modify the one given as argument. */
+// 删除元素
 unsigned char *zzlDelete(unsigned char *zl, unsigned char *eptr) {
     unsigned char *p = eptr;
 
     /* TODO: add function to ziplist API to delete N elements from offset. */
+    // 删除 member 和 score
     zl = ziplistDelete(zl,&p);
     zl = ziplistDelete(zl,&p);
     return zl;
 }
 
+// 插入节点，提请确定好插入位置，位置为空插入到末尾
 unsigned char *zzlInsertAt(unsigned char *zl, unsigned char *eptr, sds ele, double score) {
     unsigned char *sptr;
     char scorebuf[128];
     int scorelen;
     size_t offset;
-
+    // 把 score 转换为 string
     scorelen = d2string(scorebuf,sizeof(scorebuf),score);
     if (eptr == NULL) {
+        // 为空插入到尾部
         zl = ziplistPush(zl,(unsigned char*)ele,sdslen(ele),ZIPLIST_TAIL);
         zl = ziplistPush(zl,(unsigned char*)scorebuf,scorelen,ZIPLIST_TAIL);
     } else {
         /* Keep offset relative to zl, as it might be re-allocated. */
+        // 记录偏移量，insert 可能重新分配内存
         offset = eptr-zl;
+        // 插入到 eptr 位置
         zl = ziplistInsert(zl,eptr,(unsigned char*)ele,sdslen(ele));
         eptr = zl+offset;
 
         /* Insert score after the element. */
         serverAssert((sptr = ziplistNext(zl,eptr)) != NULL);
+        // 插入 score
         zl = ziplistInsert(zl,sptr,(unsigned char*)scorebuf,scorelen);
     }
     return zl;
@@ -1147,16 +1203,20 @@ unsigned char *zzlInsertAt(unsigned char *zl, unsigned char *eptr, sds ele, doub
 
 /* Insert (element,score) pair in ziplist. This function assumes the element is
  * not yet present in the list. */
+// 插入操作，由函数确定插入位置
 unsigned char *zzlInsert(unsigned char *zl, sds ele, double score) {
     unsigned char *eptr = ziplistIndex(zl,0), *sptr;
     double s;
 
     while (eptr != NULL) {
+        // 获取 score
         sptr = ziplistNext(zl,eptr);
         serverAssert(sptr != NULL);
+        // 获取 score 值
         s = zzlGetScore(sptr);
 
         if (s > score) {
+            // 大于 score 插入在这个位置的前面
             /* First element with score larger than score for element to be
              * inserted. This means we should take its spot in the list to
              * maintain ordering. */
@@ -1164,6 +1224,7 @@ unsigned char *zzlInsert(unsigned char *zl, sds ele, double score) {
             break;
         } else if (s == score) {
             /* Ensure lexicographical ordering for elements. */
+            // 相同的话按照 member 进行排序
             if (zzlCompareElements(eptr,(unsigned char*)ele,sdslen(ele)) > 0) {
                 zl = zzlInsertAt(zl,eptr,ele,score);
                 break;
@@ -1171,31 +1232,36 @@ unsigned char *zzlInsert(unsigned char *zl, sds ele, double score) {
         }
 
         /* Move to next element. */
+        // 下一个节点
         eptr = ziplistNext(zl,sptr);
     }
 
     /* Push on tail of list when it was not yet inserted. */
     if (eptr == NULL)
+    // 插入到末尾
         zl = zzlInsertAt(zl,NULL,ele,score);
     return zl;
 }
 
+// 删除给定 score 范围中的节点
 unsigned char *zzlDeleteRangeByScore(unsigned char *zl, zrangespec *range, unsigned long *deleted) {
     unsigned char *eptr, *sptr;
     double score;
     unsigned long num = 0;
 
     if (deleted != NULL) *deleted = 0;
-
+    // 范围中的第一个节点
     eptr = zzlFirstInRange(zl,range);
     if (eptr == NULL) return zl;
 
     /* When the tail of the ziplist is deleted, eptr will point to the sentinel
      * byte and ziplistNext will return NULL. */
+    // 一直进行删除，直到越界
     while ((sptr = ziplistNext(zl,eptr)) != NULL) {
         score = zzlGetScore(sptr);
         if (zslValueLteMax(score,range)) {
             /* Delete both the element and the score. */
+            // 删除
             zl = ziplistDelete(zl,&eptr);
             zl = ziplistDelete(zl,&eptr);
             num++;
@@ -1204,17 +1270,18 @@ unsigned char *zzlDeleteRangeByScore(unsigned char *zl, zrangespec *range, unsig
             break;
         }
     }
-
+    // num 设置为删除元素个数
     if (deleted != NULL) *deleted = num;
     return zl;
 }
 
+// 删除给定 member 范围中的元素
 unsigned char *zzlDeleteRangeByLex(unsigned char *zl, zlexrangespec *range, unsigned long *deleted) {
     unsigned char *eptr, *sptr;
     unsigned long num = 0;
 
     if (deleted != NULL) *deleted = 0;
-
+    // 第一个待删除元素
     eptr = zzlFirstInLexRange(zl,range);
     if (eptr == NULL) return zl;
 
@@ -1223,6 +1290,7 @@ unsigned char *zzlDeleteRangeByLex(unsigned char *zl, zlexrangespec *range, unsi
     while ((sptr = ziplistNext(zl,eptr)) != NULL) {
         if (zzlLexValueLteMax(eptr,range)) {
             /* Delete both the element and the score. */
+            // 删除
             zl = ziplistDelete(zl,&eptr);
             zl = ziplistDelete(zl,&eptr);
             num++;
@@ -1238,9 +1306,12 @@ unsigned char *zzlDeleteRangeByLex(unsigned char *zl, zlexrangespec *range, unsi
 
 /* Delete all the elements with rank between start and end from the skiplist.
  * Start and end are inclusive. Note that start and end need to be 1-based */
+// 删除给定区间中的节点
 unsigned char *zzlDeleteRangeByRank(unsigned char *zl, unsigned int start, unsigned int end, unsigned long *deleted) {
+    // 节点数目
     unsigned int num = (end-start)+1;
     if (deleted) *deleted = num;
+    // ziplist 中 member 和 score 存储在一起，删除 两倍的 num
     zl = ziplistDeleteRange(zl,2*(start-1),2*num);
     return zl;
 }
