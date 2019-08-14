@@ -855,6 +855,9 @@ typedef struct zskiplist {
     int level;
 } zskiplist;
 
+// 使用 dict 和 跳表配和实现 zset，但是底层数据使用指针，并不会造成多余的空间浪费，效率提升很多
+// 使用 dict 让查找复杂度为 O(1)
+// 使用 skiplist 让范围操作变为 O(logN)，否则 dict 需要重新排序
 typedef struct zset {
     dict *dict;
     zskiplist *zsl;
