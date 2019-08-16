@@ -2214,7 +2214,7 @@ unsigned long zuiLength(zsetopsrc *op) {
 /* Check if the current value is valid. If so, store it in the passed structure
  * and move to the next element. If not valid, this means we have reached the
  * end of the structure and can abort. */
-// 检查迭代器是否合法，合法将元素保存在 val 中，否则返回 0
+// 检查迭代器是否合法，合法将元素保存在 val 中，并将迭代器向前移，否则返回 0
 int zuiNext(zsetopsrc *op, zsetopval *val) {
     if (op->subject == NULL)
         return 0;
@@ -2280,7 +2280,7 @@ int zuiNext(zsetopsrc *op, zsetopval *val) {
     return 1;
 }
 
-// 获取 longlong
+// 获取从迭代器元素中 longlong
 int zuiLongLongFromValue(zsetopval *val) {
     if (!(val->flags & OPVAL_DIRTY_LL)) {
         val->flags |= OPVAL_DIRTY_LL;
@@ -2299,6 +2299,7 @@ int zuiLongLongFromValue(zsetopval *val) {
     return val->flags & OPVAL_VALID_LL;
 }
 
+// 从迭代器元素中获取 sds
 sds zuiSdsFromValue(zsetopval *val) {
     if (val->ele == NULL) {
         if (val->estr != NULL) {
@@ -2313,6 +2314,7 @@ sds zuiSdsFromValue(zsetopval *val) {
 
 /* This is different from zuiSdsFromValue since returns a new SDS string
  * which is up to the caller to free. */
+// 从 zsetopval 返回一个新的 sds，由字符串调用者进行释放
 sds zuiNewSdsFromValue(zsetopval *val) {
     if (val->flags & OPVAL_DIRTY_SDS) {
         /* We have already one to return! */
@@ -2329,6 +2331,7 @@ sds zuiNewSdsFromValue(zsetopval *val) {
     }
 }
 
+// 从 val 中获取字符串
 int zuiBufferFromValue(zsetopval *val) {
     if (val->estr == NULL) {
         if (val->ele != NULL) {
@@ -2344,11 +2347,14 @@ int zuiBufferFromValue(zsetopval *val) {
 
 /* Find value pointed to by val in the source pointer to by op. When found,
  * return 1 and store its score in target. Return 0 otherwise. */
+// 在迭代器指定对象中查找给定的元素
+// 找到返回 1，否则返回 0
 int zuiFind(zsetopsrc *op, zsetopval *val, double *score) {
     if (op->subject == NULL)
         return 0;
-
+    // 集合
     if (op->type == OBJ_SET) {
+        // 成员为整数，score = 1.0
         if (op->encoding == OBJ_ENCODING_INTSET) {
             if (zuiLongLongFromValue(val) &&
                 intsetFind(op->subject->ptr,val->ell))
@@ -2358,6 +2364,7 @@ int zuiFind(zsetopsrc *op, zsetopval *val, double *score) {
             } else {
                 return 0;
             }
+        // 成员为对象，score = 1.0
         } else if (op->encoding == OBJ_ENCODING_HT) {
             dict *ht = op->subject->ptr;
             zuiSdsFromValue(val);
@@ -2370,10 +2377,13 @@ int zuiFind(zsetopsrc *op, zsetopval *val, double *score) {
         } else {
             serverPanic("Unknown set encoding");
         }
+    // 有序集合
     } else if (op->type == OBJ_ZSET) {
+        // 取出对象
         zuiSdsFromValue(val);
 
         if (op->encoding == OBJ_ENCODING_ZIPLIST) {
+            // 取出成员和 score
             if (zzlFind(op->subject->ptr,val->ele,score) != NULL) {
                 /* Score is already set by zzlFind. */
                 return 1;
@@ -2383,7 +2393,9 @@ int zuiFind(zsetopsrc *op, zsetopval *val, double *score) {
         } else if (op->encoding == OBJ_ENCODING_SKIPLIST) {
             zset *zs = op->subject->ptr;
             dictEntry *de;
+            // 在 dict 中进行查找成员对象
             if ((de = dictFind(zs->dict,val->ele)) != NULL) {
+                // 取出 score
                 *score = *(double*)dictGetVal(de);
                 return 1;
             } else {
@@ -2397,6 +2409,7 @@ int zuiFind(zsetopsrc *op, zsetopval *val, double *score) {
     }
 }
 
+// 对比两个被迭代对象的基数
 int zuiCompareByCardinality(const void *s1, const void *s2) {
     unsigned long first = zuiLength((zsetopsrc*)s1);
     unsigned long second = zuiLength((zsetopsrc*)s2);
@@ -2410,15 +2423,20 @@ int zuiCompareByCardinality(const void *s1, const void *s2) {
 #define REDIS_AGGR_MAX 3
 #define zunionInterDictValue(_e) (dictGetVal(_e) == NULL ? 1.0 : *(double*)dictGetVal(_e))
 
+// 根据 aggregate 参数的值，决定如何对 *target 和 val 进行聚合计算
 inline static void zunionInterAggregate(double *target, double val, int aggregate) {
+    // 求和
     if (aggregate == REDIS_AGGR_SUM) {
         *target = *target + val;
         /* The result of adding two doubles is NaN when one variable
          * is +inf and the other is -inf. When these numbers are added,
          * we maintain the convention of the result being 0.0. */
+        // 检查是否溢出
         if (isnan(*target)) *target = 0.0;
+    // 求两者小数
     } else if (aggregate == REDIS_AGGR_MIN) {
         *target = val < *target ? val : *target;
+    // 求两者大数
     } else if (aggregate == REDIS_AGGR_MAX) {
         *target = val > *target ? val : *target;
     } else {
@@ -2453,6 +2471,7 @@ void zunionInterGenericCommand(client *c, robj *dstkey, int op) {
     int touched = 0;
 
     /* expect setnum input keys to be given */
+    // 取出要处理的有序集合的个数
     if ((getLongFromObjectOrReply(c, c->argv[2], &setnum, NULL) != C_OK))
         return;
 
@@ -2463,6 +2482,7 @@ void zunionInterGenericCommand(client *c, robj *dstkey, int op) {
     }
 
     /* test if the expected number of keys would overflow */
+    // setnum 参数传入 key 数量不同
     if (setnum > c->argc-3) {
         addReply(c,shared.syntaxerr);
         return;
