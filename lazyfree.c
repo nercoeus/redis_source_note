@@ -51,17 +51,25 @@ size_t lazyfreeGetFreeEffort(robj *obj) {
  * a lazy free list instead of being freed synchronously. The lazy free list
  * will be reclaimed in a different bio.c thread. */
 #define LAZYFREE_THRESHOLD 64
+// 用来评估是否需要异步删除的阈值
 int dbAsyncDelete(redisDb *db, robj *key) {
     /* Deleting an entry from the expires dict will not free the sds of
      * the key, because it is shared with the main dictionary. */
+    // 先从 expire 字典中删除这个 entry（释放 expire 字典的 entry 内存）
     if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr);
 
     /* If the value is composed of a few allocations, to free in a lazy way
      * is actually just slower... So under a certain limit we just free
      * the object synchronously. */
+    // 从 db 的 key space 中摘掉这个 entry，但是不释放键值对内存
     dictEntry *de = dictUnlink(db->dict,key->ptr);
     if (de) {
         robj *val = dictGetVal(de);
+        // 评估删除代价
+        // 默认为 1
+        // list 对象，取其长度
+        // 以 hash 存储 set/hash 对象，取其元素个数
+        // 跳表存储  zset，取跳表长度
         size_t free_effort = lazyfreeGetFreeEffort(val);
 
         /* If releasing the object is too much work, do it in the background
@@ -72,6 +80,7 @@ int dbAsyncDelete(redisDb *db, robj *key) {
          * objects, and then call dbDelete(). In this case we'll fall
          * through and reach the dictFreeUnlinkedEntry() call, that will be
          * equivalent to just calling decrRefCount(). */
+        // 代价大于阈值，给后台线程删除
         if (free_effort > LAZYFREE_THRESHOLD && val->refcount == 1) {
             atomicIncr(lazyfree_objects,1);
             bioCreateBackgroundJob(BIO_LAZY_FREE,val,NULL,NULL);

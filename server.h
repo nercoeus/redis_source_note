@@ -636,14 +636,23 @@ typedef struct clientReplyBlock {
 /* Redis database representation. There are multiple databases identified
  * by integers from 0 (the default database) up to the max configured
  * database. The database number is the 'id' field in the structure. */
+// redis 数据库结构体，数据库由 0 ~ max 标识，存储在 redisDb.id 中
 typedef struct redisDb {
+    // 数据库键空间，用字典存储，保存数据库中的键值对
     dict *dict;                 /* The keyspace for this DB */
+    // 保存键的过期时间，键为 key_name，值为过期时间的 UNIX 时间戳
     dict *expires;              /* Timeout of keys with a timeout set */
+    // 正处在阻塞状态的键
     dict *blocking_keys;        /* Keys with clients waiting for data (BLPOP)*/
+    // 可以解除阻塞的键
     dict *ready_keys;           /* Blocked keys that received a PUSH */
+    // 正在被 watch 监视的键
     dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
+    // 数据库号码
     int id;                     /* Database ID */
+    // 数据库的键的平均 TTL，统计信息
     long long avg_ttl;          /* Average TTL, just for stats */
+    // 逐渐尝试逐个碎片整理的键名列表
     list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
 } redisDb;
 
@@ -1231,7 +1240,7 @@ struct redisServer {
     /* Limits */
     unsigned int maxclients;            /* Max number of simultaneous clients */
     unsigned long long maxmemory;   /* Max number of memory bytes to use */
-    int maxmemory_policy;           /* Policy for key eviction */
+    int maxmemory_policy;           /* 最大使用内存 Policy for key eviction */
     int maxmemory_samples;          /* Pricision of random sampling */
     int lfu_log_factor;             /* LFU logarithmic counter factor. */
     int lfu_decay_time;             /* LFU counter decay factor. */

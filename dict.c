@@ -655,7 +655,7 @@ dictIterator *dictGetIterator(dict *d)
     return iter;
 }
 
-// 获得一个安全在迭代器，直接拿一个不安全的修改一下safe字段即可
+// 获得一个安全的迭代器，直接拿一个不安全的修改一下safe字段即可
 dictIterator *dictGetSafeIterator(dict *d) {
     dictIterator *i = dictGetIterator(d);
 
