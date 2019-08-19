@@ -277,6 +277,8 @@ int pubsubUnsubscribeAllPatterns(client *c, int notify) {
 }
 
 /* Publish a message */
+// 将 message 发送到所有订阅频道 channel 的客户端
+// 以及所有订阅了 channel 频道匹配的模式的客户端
 int pubsubPublishMessage(robj *channel, robj *message) {
     int receivers = 0;
     dictEntry *de;

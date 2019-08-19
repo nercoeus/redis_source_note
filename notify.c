@@ -29,18 +29,21 @@
 
 #include "server.h"
 
+// 实现了 redis 的通知功能
 /* This file implements keyspace events notification via Pub/Sub and
  * described at https://redis.io/topics/notifications. */
 
 /* Turn a string representing notification classes into an integer
  * representing notification classes flags xored.
- *
+ *  对传入的字符串进行解析，给出相应的 flags 值
  * The function returns -1 if the input contains characters not mapping to
  * any class. */
+// 传入的 string 包含不能解析的字符串，return -1
+// 根据字符串返回对应的 flags
 int keyspaceEventsStringToFlags(char *classes) {
     char *p = classes;
     int c, flags = 0;
-
+    // 遍历
     while((c = *p++) != '\0') {
         switch(c) {
         case 'A': flags |= NOTIFY_ALL; break;
@@ -65,6 +68,7 @@ int keyspaceEventsStringToFlags(char *classes) {
  * as input an integer with the xored flags and returns a string representing
  * the selected classes. The string returned is an sds string that needs to
  * be released with sdsfree(). */
+// 根据 flag 返回对应的字符串
 sds keyspaceEventsFlagsToString(int flags) {
     sds res;
 
@@ -92,8 +96,12 @@ sds keyspaceEventsFlagsToString(int flags) {
  * notifyKeyspaceEvent(char *event, robj *key, int dbid);
  *
  * 'event' is a C string representing the event name.
+ * event：一个字符串标识的事件名
  * 'key' is a Redis object representing the key name.
+ * 键名
  * 'dbid' is the database ID where the key lives.  */
+// 数据库所在的 id
+// 复用了 public 的代码，仅仅使用了 pubsubPublishMessage()一个函数就完成了消息通知的工作
 void notifyKeyspaceEvent(int type, char *event, robj *key, int dbid) {
     sds chan;
     robj *chanobj, *eventobj;
@@ -107,32 +115,42 @@ void notifyKeyspaceEvent(int type, char *event, robj *key, int dbid) {
      moduleNotifyKeyspaceEvent(type, event, key, dbid);
     
     /* If notifications for this class of events are off, return ASAP. */
+    // 如果服务器为不发送 type 类型的通知，直接返回
     if (!(server.notify_keyspace_events & type)) return;
-
+    // 事件的名字
     eventobj = createStringObject(event,strlen(event));
 
     /* __keyspace@<db>__:<key> <event> notifications. */
+    // 发送键空间通知
     if (server.notify_keyspace_events & NOTIFY_KEYSPACE) {
+        // 构建频道对象
         chan = sdsnewlen("__keyspace@",11);
         len = ll2string(buf,sizeof(buf),dbid);
         chan = sdscatlen(chan, buf, len);
         chan = sdscatlen(chan, "__:", 3);
         chan = sdscatsds(chan, key->ptr);
         chanobj = createObject(OBJ_STRING, chan);
+        // 通过 publish 命令发送通知
         pubsubPublishMessage(chanobj, eventobj);
+        // 释放频道对象
         decrRefCount(chanobj);
     }
 
     /* __keyevent@<db>__:<event> <key> notifications. */
+    // 发送键事件通知
     if (server.notify_keyspace_events & NOTIFY_KEYEVENT) {
+        // 构建频道对象
         chan = sdsnewlen("__keyevent@",11);
         if (len == -1) len = ll2string(buf,sizeof(buf),dbid);
         chan = sdscatlen(chan, buf, len);
         chan = sdscatlen(chan, "__:", 3);
         chan = sdscatsds(chan, eventobj->ptr);
         chanobj = createObject(OBJ_STRING, chan);
+        // 通过 publish 命令发送通知
         pubsubPublishMessage(chanobj, key);
+        // 释放频道对象
         decrRefCount(chanobj);
     }
+    // 施放事件对象
     decrRefCount(eventobj);
 }

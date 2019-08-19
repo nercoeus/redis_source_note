@@ -430,18 +430,18 @@ typedef long long mstime_t; /* millisecond time type. */
 
 /* Keyspace changes notification classes. Every class is associated with a
  * character for configuration purposes. */
-#define NOTIFY_KEYSPACE (1<<0)    /* K */
-#define NOTIFY_KEYEVENT (1<<1)    /* E */
-#define NOTIFY_GENERIC (1<<2)     /* g */
-#define NOTIFY_STRING (1<<3)      /* $ */
-#define NOTIFY_LIST (1<<4)        /* l */
-#define NOTIFY_SET (1<<5)         /* s */
-#define NOTIFY_HASH (1<<6)        /* h */
-#define NOTIFY_ZSET (1<<7)        /* z */
-#define NOTIFY_EXPIRED (1<<8)     /* x */
-#define NOTIFY_EVICTED (1<<9)     /* e */
-#define NOTIFY_STREAM (1<<10)     /* t */
-#define NOTIFY_ALL (NOTIFY_GENERIC | NOTIFY_STRING | NOTIFY_LIST | NOTIFY_SET | NOTIFY_HASH | NOTIFY_ZSET | NOTIFY_EXPIRED | NOTIFY_EVICTED | NOTIFY_STREAM) /* A flag */
+#define NOTIFY_KEYSPACE (1<<0)    /* K 键空间通知，以__keyspace@<db>__ 为前缀 */
+#define NOTIFY_KEYEVENT (1<<1)    /* E 键事件通知，以__keyevent@<db>__ 为前缀*/
+#define NOTIFY_GENERIC (1<<2)     /* g DEL，EXPIRE，RENAME 等类型无关的通用命令的通知 */
+#define NOTIFY_STRING (1<<3)      /* $ 字符串命令的通知*/
+#define NOTIFY_LIST (1<<4)        /* l 列表命令的通知*/
+#define NOTIFY_SET (1<<5)         /* s 集合命令的通知*/
+#define NOTIFY_HASH (1<<6)        /* h 哈希命令的通知*/
+#define NOTIFY_ZSET (1<<7)        /* z 有序集合命令的通知*/
+#define NOTIFY_EXPIRED (1<<8)     /* x 过期事件：每当有过期键被删除时发送*/
+#define NOTIFY_EVICTED (1<<9)     /* e 驱逐(evict)事件：每当有键因为 maxmemory 政策而被删除时发送*/
+#define NOTIFY_STREAM (1<<10)     /* t Stream events*/
+#define NOTIFY_ALL (NOTIFY_GENERIC | NOTIFY_STRING | NOTIFY_LIST | NOTIFY_SET | NOTIFY_HASH | NOTIFY_ZSET | NOTIFY_EXPIRED | NOTIFY_EVICTED | NOTIFY_STREAM) /* all notice type A flag */
 
 /* Get the first bind addr or NULL */
 #define NET_FIRST_BIND_ADDR (server.bindaddr_count ? server.bindaddr[0] : NULL)
