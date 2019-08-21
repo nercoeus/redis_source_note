@@ -230,6 +230,7 @@ typedef long long mstime_t; /* millisecond time type. */
 #define CLIENT_MONITOR (1<<2) /* This client is a slave monitor, see MONITOR */
 #define CLIENT_MULTI (1<<3)   /* This client is in a MULTI context */
 #define CLIENT_BLOCKED (1<<4) /* The client is waiting in a blocking operation */
+// 监视的 key 是否发生了改变
 #define CLIENT_DIRTY_CAS (1<<5) /* Watched keys modified. EXEC will fail. */
 #define CLIENT_CLOSE_AFTER_REPLY (1<<6) /* Close after writing entire reply. */
 #define CLIENT_UNBLOCKED (1<<7) /* This client was unblocked and is stored in
@@ -238,6 +239,7 @@ typedef long long mstime_t; /* millisecond time type. */
 #define CLIENT_ASKING (1<<9)     /* Client issued the ASKING command */
 #define CLIENT_CLOSE_ASAP (1<<10)/* Close this client ASAP */
 #define CLIENT_UNIX_SOCKET (1<<11) /* Client connected via Unix domain socket */
+// 有命令加入事务队列时发生错误进行标记
 #define CLIENT_DIRTY_EXEC (1<<12)  /* EXEC will fail for errors while queueing */
 #define CLIENT_MASTER_FORCE_REPLY (1<<13)  /* Queue replies even if is master */
 #define CLIENT_FORCE_AOF (1<<14)   /* Force AOF propagation of current cmd. */
@@ -657,14 +659,21 @@ typedef struct redisDb {
 } redisDb;
 
 /* Client MULTI/EXEC state */
+// 事务命令
 typedef struct multiCmd {
+    // 参数
     robj **argv;
+    // 参数数量
     int argc;
+    // 命令指针
     struct redisCommand *cmd;
 } multiCmd;
 
+// 事务状态
 typedef struct multiState {
+    // 事务队列，FIFO 顺序
     multiCmd *commands;     /* Array of MULTI commands */
+    // 已入队命令计数
     int count;              /* Total number of MULTI commands */
     int cmd_flags;          /* The accumulated command flags OR-ed together.
                                So if at least a command has a given flag, it
@@ -797,10 +806,12 @@ typedef struct client {
     int slave_listening_port; /* As configured with: SLAVECONF listening-port */
     char slave_ip[NET_IP_STR_LEN]; /* Optionally given by REPLCONF ip-address */
     int slave_capa;         /* Slave capabilities: SLAVE_CAPA_* bitwise OR. */
+    // 记录客户端的事务状态
     multiState mstate;      /* MULTI/EXEC state */
     int btype;              /* Type of blocking op if CLIENT_BLOCKED. */
     blockingState bpop;     /* blocking state */
     long long woff;         /* Last write global replication offset. */
+    // 监视键链表
     list *watched_keys;     /* Keys WATCHED for MULTI/EXEC CAS */
     dict *pubsub_channels;  /* channels a client is interested in (SUBSCRIBE) */
     list *pubsub_patterns;  /* patterns a client is interested in (SUBSCRIBE) */
@@ -1345,19 +1356,28 @@ typedef struct pubsubPattern {
 
 typedef void redisCommandProc(client *c);
 typedef int *redisGetKeysProc(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
+// redis 命令
 struct redisCommand {
+    // 命令名字
     char *name;
+    // 实现函数
     redisCommandProc *proc;
+    // 参数个数
     int arity;
+    // 字符串表示的 FLAG
     char *sflags; /* Flags as string representation, one char per flag. */
+    // 实际 FLAG
     int flags;    /* The actual flags, obtained from the 'sflags' field. */
     /* Use a function to determine keys arguments in a command line.
      * Used for Redis Cluster redirect. */
+    // 从命令中判断命令的键参数，在 redis 集群转向时进行使用
     redisGetKeysProc *getkeys_proc;
     /* What keys should be loaded in background when calling this command? */
+    // 指定哪些参数是 key
     int firstkey; /* The first argument that's a key (0 = no keys) */
     int lastkey;  /* The last argument that's a key */
     int keystep;  /* The step between first and last key */
+    // 统计信息，microseconds 命令执行消费的总毫微秒数，calls 是命令被执行的总次数
     long long microseconds, calls;
     int id;     /* Command ID. This is a progressive ID starting from 0 that
                    is assigned at runtime, and is used in order to check
