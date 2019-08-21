@@ -36,8 +36,11 @@
 /* TBD: include only necessary headers. */
 #include "server.h"
 
+// RDB 持久化实现
+
 /* The current RDB version. When the format changes in a way that is no longer
  * backward compatible this number gets incremented. */
+// 这个版本 RDB 的 version
 #define RDB_VERSION 9
 
 /* Defines related to the dump file format. To store 32 bits lengths for short
@@ -54,16 +57,18 @@
  *
  * Lengths up to 63 are stored using a single byte, most DB keys, and may
  * values, will fit inside. */
-#define RDB_6BITLEN 0
-#define RDB_14BITLEN 1
-#define RDB_32BITLEN 0x80
-#define RDB_64BITLEN 0x81
-#define RDB_ENCVAL 3
-#define RDB_LENERR UINT64_MAX
+// INT 类型编码，通过前两位来进行判断，和 ziplist 的编码方式很相似
+#define RDB_6BITLEN 0           // 6 bit
+#define RDB_14BITLEN 1          // 14 bit
+#define RDB_32BITLEN 0x80       // 32 bit
+#define RDB_64BITLEN 0x81       // 64 bit
+#define RDB_ENCVAL 3            // 特殊编码对象
+#define RDB_LENERR UINT64_MAX   // 读取/写入出错
 
 /* When a length of a string object stored on disk has the first two bits
  * set, the remaining six bits specify a special encoding for the object
  * accordingly to the following defines: */
+// string 类型编码，3，4 位决定了 string 长度
 #define RDB_ENC_INT8 0        /* 8 bit signed integer */
 #define RDB_ENC_INT16 1       /* 16 bit signed integer */
 #define RDB_ENC_INT32 2       /* 32 bit signed integer */
@@ -72,18 +77,20 @@
 /* Map object types to RDB object types. Macros starting with OBJ_ are for
  * memory storage and may change. Instead RDB types must be fixed because
  * we store them on disk. */
+// 对象类型在 RDB 文件中的类型标识
 #define RDB_TYPE_STRING 0
 #define RDB_TYPE_LIST   1
 #define RDB_TYPE_SET    2
 #define RDB_TYPE_ZSET   3
 #define RDB_TYPE_HASH   4
-#define RDB_TYPE_ZSET_2 5 /* ZSET version 2 with doubles stored in binary. */
+#define RDB_TYPE_ZSET_2 5 /* 存储 2 进制的双精度数 ZSET version 2 with doubles stored in binary. */
 #define RDB_TYPE_MODULE 6
 #define RDB_TYPE_MODULE_2 7 /* Module value with annotations for parsing without
                                the generating module being loaded. */
 /* NOTE: WHEN ADDING NEW RDB TYPE, UPDATE rdbIsObjectType() BELOW */
 
 /* Object types for encoded objects. */
+// 对象的编码方式
 #define RDB_TYPE_HASH_ZIPMAP    9
 #define RDB_TYPE_LIST_ZIPLIST  10
 #define RDB_TYPE_SET_INTSET    11
@@ -94,17 +101,23 @@
 /* NOTE: WHEN ADDING NEW RDB TYPE, UPDATE rdbIsObjectType() BELOW */
 
 /* Test if a type is an object type. */
+// 检查给定类型是否是对象
 #define rdbIsObjectType(t) ((t >= 0 && t <= 7) || (t >= 9 && t <= 15))
 
 /* Special RDB opcodes (saved/loaded with rdbSaveType/rdbLoadType). */
+// 数据库特殊操作标识符
 #define RDB_OPCODE_MODULE_AUX 247   /* Module auxiliary data. */
 #define RDB_OPCODE_IDLE       248   /* LRU idle time. */
 #define RDB_OPCODE_FREQ       249   /* LFU frequency. */
 #define RDB_OPCODE_AUX        250   /* RDB aux field. */
 #define RDB_OPCODE_RESIZEDB   251   /* Hash table resize hint. */
+// 毫秒计算的过期时间
 #define RDB_OPCODE_EXPIRETIME_MS 252    /* Expire time in milliseconds. */
+// 秒计算的过期时间
 #define RDB_OPCODE_EXPIRETIME 253       /* Old expire time in seconds. */
+// 选择数据库
 #define RDB_OPCODE_SELECTDB   254   /* DB number of the following keys. */
+// 每个数据库结尾标识，但不是 RDB 文件的结尾
 #define RDB_OPCODE_EOF        255   /* End of the RDB file. */
 
 /* Module serialized values sub opcodes */

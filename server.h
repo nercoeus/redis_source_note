@@ -1339,9 +1339,9 @@ struct redisServer {
 };
 
 typedef struct pubsubPattern {
-    client *client;
-    robj *pattern;
-} pubsubPattern;
+    client *client;   // 订阅模式的客户端
+    robj *pattern;    // 被订阅的模式
+} pubsubPattern;      // 订阅模式客户端的链表节点
 
 typedef void redisCommandProc(client *c);
 typedef int *redisGetKeysProc(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);

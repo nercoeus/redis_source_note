@@ -40,6 +40,8 @@
 #include <sys/wait.h>
 #include <sys/param.h>
 
+// AOF 持久化实现
+
 void aofUpdateCurrentSize(void);
 void aofClosePipes(void);
 
