@@ -1399,8 +1399,11 @@ typedef struct _redisSortObject {
     } u;
 } redisSortObject;
 
+// sort 结构体
 typedef struct _redisSortOperation {
+    // 操作类型，GET，DEL，INCR 或者 DECR
     int type;
+    // 用户给定的模式
     robj *pattern;
 } redisSortOperation;
 

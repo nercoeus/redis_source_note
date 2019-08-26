@@ -33,8 +33,11 @@
 #include "pqsort.h" /* Partial qsort for SORT+LIMIT */
 #include <math.h> /* isnan() */
 
+// SORT 命令实现
+
 zskiplistNode* zslGetElementByRank(zskiplist *zsl, unsigned long rank);
 
+// 创建一次 sort 操作
 redisSortOperation *createSortOperation(int type, robj *pattern) {
     redisSortOperation *so = zmalloc(sizeof(*so));
     so->type = type;

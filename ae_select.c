@@ -28,6 +28,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+// select 绑定
 
 #include <sys/select.h>
 #include <string.h>

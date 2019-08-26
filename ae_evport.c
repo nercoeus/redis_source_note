@@ -27,6 +27,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+// evport 绑定
 
 #include <assert.h>
 #include <errno.h>

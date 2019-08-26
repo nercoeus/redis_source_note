@@ -28,6 +28,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+// kqueue 绑定
 
 #include <sys/types.h>
 #include <sys/event.h>
