@@ -38,90 +38,117 @@ static void setProtocolError(const char *errstr, client *c);
 /* Return the size consumed from the allocator, for the specified SDS string,
  * including internal fragmentation. This function is used in order to compute
  * the client output buffer size. */
+// 返回 sds 字符串的分配内存大小，包括内存碎片，用来计算客户端输出缓冲区大小
 size_t sdsZmallocSize(sds s) {
+    // 返回 sds 内存头部地址
     void *sh = sdsAllocPtr(s);
+    // 返回内存块大小，不是 sds 大小
     return zmalloc_size(sh);
 }
 
 /* Return the amount of memory used by the sds string at object->ptr
  * for a string object. */
+// 返回 o-> ptr 的对象内存大小
 size_t getStringObjectSdsUsedMemory(robj *o) {
+    // 必须是 string 对象
     serverAssertWithInfo(NULL,o,o->type == OBJ_STRING);
     switch(o->encoding) {
     case OBJ_ENCODING_RAW: return sdsZmallocSize(o->ptr);
+    // embstr 中使用连接在一起的内存块，所以使用整块内存大小 - 头部大小 = sds 内存大小
     case OBJ_ENCODING_EMBSTR: return zmalloc_size(o)-sizeof(robj);
     default: return 0; /* Just integer encoding for now. */
     }
 }
 
 /* Client.reply list dup and free methods. */
+// 复制方法
 void *dupClientReplyValue(void *o) {
     clientReplyBlock *old = o;
+    // 分配空间
     clientReplyBlock *buf = zmalloc(sizeof(clientReplyBlock) + old->size);
+    // 把 o 中的数据复制到 buf
     memcpy(buf, o, sizeof(clientReplyBlock) + old->size);
+    // 返回复制后的缓冲区
     return buf;
 }
-
+// 删除方法
 void freeClientReplyValue(void *o) {
+    // 直接释放即可，因为 o 中不存在指针，是一块完整的内存
     zfree(o);
 }
 
+// 比较两个 string 字符串
 int listMatchObjects(void *a, void *b) {
     return equalStringObjects(a,b);
 }
 
 /* This function links the client to the global linked list of clients.
  * unlinkClient() does the opposite, among other things. */
+// 把客户端添加到服务器链表中
 void linkClient(client *c) {
+    // 添加到链表末尾
     listAddNodeTail(server.clients,c);
     /* Note that we remember the linked list node where the client is stored,
      * this way removing the client in unlinkClient() will not require
      * a linear scan, but just a constant time operation. */
+    // 记录该几点在 server.client 中的指针，再删除时可以在常数时间内进行删除（双向链表）
     c->client_list_node = listLast(server.clients);
     uint64_t id = htonu64(c->id);
+    // 添加到活跃客户端链表中
     raxInsert(server.clients_index,(unsigned char*)&id,sizeof(id),c,NULL);
 }
 
+// 创建一个客户端
 client *createClient(int fd) {
+    // 分配内存
     client *c = zmalloc(sizeof(client));
 
     /* passing -1 as fd it is possible to create a non connected client.
      * This is useful since all the commands needs to be executed
      * in the context of a client. When commands are executed in other
      * contexts (for instance a Lua script) we need a non connected client. */
+    // fd != -1 创建一个客户端连接
+    // fd == -1 创建无网络连接的伪客户端
+    // 因为 Redis 命令需要在上下文环境中运行，例如 执行 lua 环境中的命令需要要用到它
     if (fd != -1) {
+        // 设置为非阻塞
         anetNonBlock(NULL,fd);
+        // 禁用 Nagle 算法
         anetEnableTcpNoDelay(NULL,fd);
+        // 设置 keep alive
         if (server.tcpkeepalive)
             anetKeepAlive(NULL,fd,server.tcpkeepalive);
+        // 绑定读事件到事件 loop（开始接受命令请求）
         if (aeCreateFileEvent(server.el,fd,AE_READABLE,
             readQueryFromClient, c) == AE_ERR)
         {
+            // 创建读事件失败，直接返回创建不成功
             close(fd);
             zfree(c);
             return NULL;
         }
     }
-
-    selectDb(c,0);
+    // 初始化每个字段
+    selectDb(c,0);      // 默认使用 0 号数据库
+    // 分配一个 client_id 存储在 server 结构体中
     uint64_t client_id;
     atomicGetIncr(server.next_client_id,client_id,1);
-    c->id = client_id;
+    c->id = client_id;  // 设置 client_id
     c->resp = 2;
-    c->fd = fd;
-    c->name = NULL;
-    c->bufpos = 0;
+    c->fd = fd;         // 套接字
+    c->name = NULL;     // 名字
+    c->bufpos = 0;      // 回复缓冲区偏移量
     c->qb_pos = 0;
     c->querybuf = sdsempty();
     c->pending_querybuf = sdsempty();
     c->querybuf_peak = 0;
     c->reqtype = 0;
-    c->argc = 0;
-    c->argv = NULL;
-    c->cmd = c->lastcmd = NULL;
+    c->argc = 0;         // 命令参数数量
+    c->argv = NULL;      // 命令参数
+    c->cmd = c->lastcmd = NULL;  // 当前执行命令和下一条命令
     c->user = ACLGetUserByName("default",7);
-    c->multibulklen = 0;
-    c->bulklen = -1;
+    c->multibulklen = 0; // 查询缓冲区中未读入的命令内容数量
+    c->bulklen = -1;     // 读入参数长度
     c->sentlen = 0;
     c->flags = 0;
     c->ctime = c->lastinteraction = server.unixtime;
@@ -135,11 +162,13 @@ client *createClient(int fd) {
     c->slave_listening_port = 0;
     c->slave_ip[0] = '\0';
     c->slave_capa = SLAVE_CAPA_NONE;
-    c->reply = listCreate();
+    c->reply = listCreate();  // 回复链表
     c->reply_bytes = 0;
     c->obuf_soft_limit_reached_time = 0;
+    // 回复链表的释放和复制函数，妙
     listSetFreeMethod(c->reply,freeClientReplyValue);
     listSetDupMethod(c->reply,dupClientReplyValue);
+    // 阻塞类型
     c->btype = BLOCKED_NONE;
     c->bpop.timeout = 0;
     c->bpop.keys = dictCreate(&objectKeyHeapPointerValueDictType,NULL);
@@ -151,6 +180,7 @@ client *createClient(int fd) {
     c->bpop.reploffset = 0;
     c->woff = 0;
     c->watched_keys = listCreate();
+    // 订阅的频道和模式
     c->pubsub_channels = dictCreate(&objectKeyPointerValueDictType,NULL);
     c->pubsub_patterns = listCreate();
     c->peerid = NULL;
@@ -158,6 +188,7 @@ client *createClient(int fd) {
     listSetFreeMethod(c->pubsub_patterns,decrRefCountVoid);
     listSetMatchMethod(c->pubsub_patterns,listMatchObjects);
     if (fd != -1) linkClient(c);
+    // 初始化客户端事务状态
     initClientMultiState(c);
     return c;
 }
@@ -169,6 +200,7 @@ client *createClient(int fd) {
  * handleClientsWithPendingWrites() function).
  * If we fail and there is more data to write, compared to what the socket
  * buffers can hold, then we'll really install the handler. */
+// 添加写操作进入事件循环处理器
 void clientInstallWriteHandler(client *c) {
     /* Schedule the client to write the output buffers to the socket only
      * if not already done and, for slaves, if the slave can actually receive
@@ -184,6 +216,7 @@ void clientInstallWriteHandler(client *c) {
          * a system call. We'll only really install the write handler if
          * we'll not be able to write the whole reply at once. */
         c->flags |= CLIENT_PENDING_WRITE;
+        // 添加到 clients_pending_write 队列中
         listAddNodeHead(server.clients_pending_write,c);
     }
 }
@@ -210,9 +243,14 @@ void clientInstallWriteHandler(client *c) {
  * Typically gets called every time a reply is built, before adding more
  * data to the clients output buffers. If the function returns C_ERR no
  * data should be appended to the output buffers. */
+// 每次向客户端发送数据时进行调用
+// 当客户端收到新的数据时，函数返回 OK，并将写事件添加到事件管理器中，当套接字可写时会进行调用
+// 对于不因该接收数据的客户端，如伪客户端，master 以及 未 ONLINE 的 slave，写事件添加失败，返回 ERR
+// 当每个回复被创建时调用，如返回 ERR，没有数据会被追加到输出缓冲区
 int prepareClientToWrite(client *c) {
     /* If it's the Lua client we always return ok without installing any
      * handler since there is no socket at all. */
+    // LUA 客户端一直是可写的
     if (c->flags & (CLIENT_LUA|CLIENT_MODULE)) return C_OK;
 
     /* CLIENT REPLY OFF / SKIP handling: don't send replies. */
@@ -220,13 +258,16 @@ int prepareClientToWrite(client *c) {
 
     /* Masters don't receive replies, unless CLIENT_MASTER_FORCE_REPLY flag
      * is set. */
+    // 客户端是主服务器，并且不接受查询，是不可写的
     if ((c->flags & CLIENT_MASTER) &&
         !(c->flags & CLIENT_MASTER_FORCE_REPLY)) return C_ERR;
-
+    // 伪客户端不可写
     if (c->fd <= 0) return C_ERR; /* Fake client for AOF loading. */
 
     /* Schedule the client to write the output buffers to the socket, unless
      * it should already be setup to do so (it has already pending data). */
+    // 如果有待处理的数据说明已经添加了，不需要重复添加
+    // 否则添加写处理器进行事件循环
     if (!clientHasPendingReplies(c)) clientInstallWriteHandler(c);
 
     /* Authorize the caller to queue in the output buffer of this client. */
@@ -236,7 +277,7 @@ int prepareClientToWrite(client *c) {
 /* -----------------------------------------------------------------------------
  * Low level functions to add more data to output buffers.
  * -------------------------------------------------------------------------- */
-
+// 把字符串 s 添加到回复缓冲区
 int _addReplyToBuffer(client *c, const char *s, size_t len) {
     size_t available = sizeof(c->buf)-c->bufpos;
 
@@ -244,11 +285,13 @@ int _addReplyToBuffer(client *c, const char *s, size_t len) {
 
     /* If there already are entries in the reply list, we cannot
      * add anything more to the static buffer. */
+    // 已经有数据
     if (listLength(c->reply) > 0) return C_ERR;
 
     /* Check that the buffer has enough space available for this string. */
+    // 空间不够
     if (len > available) return C_ERR;
-
+    // 写入缓冲区
     memcpy(c->buf+c->bufpos,s,len);
     c->bufpos+=len;
     return C_OK;
@@ -772,6 +815,7 @@ void copyClientOutputBuffer(client *dst, client *src) {
 
 /* Return true if the specified client has pending reply buffers to write to
  * the socket. */
+// 客户端有要写入套接字被挂起的回复缓冲区返回 true
 int clientHasPendingReplies(client *c) {
     return c->bufpos || listLength(c->reply);
 }
@@ -1185,26 +1229,32 @@ void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
  * we can just write the replies to the client output buffer without any
  * need to use a syscall in order to install the writable event handler,
  * get it called, and so forth. */
+// 处理 clients_pending_write 队列中待添加处理器的客户端
 int handleClientsWithPendingWrites(void) {
     listIter li;
     listNode *ln;
+    // 在这里进行处理器的添加
     int processed = listLength(server.clients_pending_write);
-
+    // 新建迭代器
     listRewind(server.clients_pending_write,&li);
     while((ln = listNext(&li))) {
+        // 获取当前客户端
         client *c = listNodeValue(ln);
         c->flags &= ~CLIENT_PENDING_WRITE;
         listDelNode(server.clients_pending_write,ln);
 
         /* If a client is protected, don't do anything,
          * that may trigger write error or recreate handler. */
+        // 客户端是保护的，不执行任何操作
         if (c->flags & CLIENT_PROTECTED) continue;
 
         /* Try to write buffers to the client socket. */
+        // 尝试向写缓冲区写数据
         if (writeToClient(c->fd,c,0) == C_ERR) continue;
 
         /* If after the synchronous writes above we still have data to
          * output to the client, we need to install the writable handler. */
+        // 上面尝试写入数据，成功就添加写处理器
         if (clientHasPendingReplies(c)) {
             int ae_flags = AE_WRITABLE;
             /* For the fsync=always policy, we want that a given FD is never
@@ -1217,6 +1267,7 @@ int handleClientsWithPendingWrites(void) {
             {
                 ae_flags |= AE_BARRIER;
             }
+            // 添加
             if (aeCreateFileEvent(server.el, c->fd, ae_flags,
                 sendReplyToClient, c) == AE_ERR)
             {

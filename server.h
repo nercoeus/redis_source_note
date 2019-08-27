@@ -232,6 +232,7 @@ typedef long long mstime_t; /* millisecond time type. */
 #define CLIENT_BLOCKED (1<<4) /* The client is waiting in a blocking operation */
 // 监视的 key 是否发生了改变
 #define CLIENT_DIRTY_CAS (1<<5) /* Watched keys modified. EXEC will fail. */
+// 写完回复后关闭
 #define CLIENT_CLOSE_AFTER_REPLY (1<<6) /* Close after writing entire reply. */
 #define CLIENT_UNBLOCKED (1<<7) /* This client was unblocked and is stored in
                                   server.unblocked_clients */
@@ -250,6 +251,7 @@ typedef long long mstime_t; /* millisecond time type. */
 #define CLIENT_PREVENT_AOF_PROP (1<<19)  /* Don't propagate to AOF. */
 #define CLIENT_PREVENT_REPL_PROP (1<<20)  /* Don't propagate to slaves. */
 #define CLIENT_PREVENT_PROP (CLIENT_PREVENT_AOF_PROP|CLIENT_PREVENT_REPL_PROP)
+// 客户端等待发送数据，但对应的套接字还没有添加写处理
 #define CLIENT_PENDING_WRITE (1<<21) /* Client has output to send but a write
                                         handler is yet not installed. */
 #define CLIENT_REPLY_OFF (1<<22)   /* Don't send replies to client. */
@@ -630,9 +632,10 @@ struct evictionPoolEntry; /* Defined in evict.c */
 
 /* This structure is used in order to represent the output buffer of a client,
  * which is actually a linked list of blocks like that, that is: client->reply. */
+// 表示客户端的输出缓冲区
 typedef struct clientReplyBlock {
-    size_t size, used;
-    char buf[];
+    size_t size, used; // 缓冲区大小和已经使用的大小
+    char buf[];   // 缓冲区
 } clientReplyBlock;
 
 /* Redis database representation. There are multiple databases identified
@@ -760,6 +763,7 @@ typedef struct user {
 
 /* With multiplexing we need to take per-client state.
  * Clients are taken in a linked list. */
+// 客户端使用一个链表进行连接
 typedef struct client {
     uint64_t id;            /* Client incremental unique ID. */
     int fd;                 /* Client socket. */
@@ -780,6 +784,7 @@ typedef struct client {
     int reqtype;            /* Request protocol type: PROTO_REQ_* */
     int multibulklen;       /* Number of multi bulk arguments left to read. */
     long bulklen;           /* Length of bulk argument in multi bulk request. */
+    // 要发送到客户端的回复对象列表
     list *reply;            /* List of reply objects to send to the client. */
     unsigned long long reply_bytes; /* Tot bytes of objects in reply list. */
     size_t sentlen;         /* Amount of bytes already sent in the current
@@ -819,6 +824,7 @@ typedef struct client {
     listNode *client_list_node; /* list node in client list */
 
     /* Response buffer */
+    // 回复缓冲区
     int bufpos;
     char buf[PROTO_REPLY_CHUNK_BYTES];
 } client;
@@ -1037,8 +1043,10 @@ struct redisServer {
     int sofd;                   /* Unix socket file descriptor */
     int cfd[CONFIG_BINDADDR_MAX];/* Cluster bus listening socket */
     int cfd_count;              /* Used slots in cfd[] */
+    // 使用双向链表来保存所有客户端
     list *clients;              /* List of active clients */
     list *clients_to_close;     /* Clients to close asynchronously */
+    // 添加套接字处理操作
     list *clients_pending_write; /* There is to write or install handler. */
     list *slaves, *monitors;    /* List of slaves and MONITORs */
     client *current_client; /* Current client, only used on crash report */
@@ -1608,6 +1616,7 @@ void unblockClientWaitingData(client *c);
 void popGenericCommand(client *c, int where);
 
 /* MULTI/EXEC/WATCH... */
+// 事务相关 API
 void unwatchAllKeys(client *c);
 void initClientMultiState(client *c);
 void freeClientMultiState(client *c);
