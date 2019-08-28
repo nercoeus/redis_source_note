@@ -20,9 +20,11 @@
 2019/8/21 :完成multi.c部分的源码注释---------------详细程度：★★★★   
 2019/8/26 :完成ae.c以及epoll部分的源码注释---------详细程度：★★★★   
 2019/8/27 :完成anet.c部分的源码注释----------------详细程度：★★★★   
+2019/8/27 :完成networking.c部分的源码注释----------详细程度：★★★   
   
-# 注解思路：[huangz：如何阅读 redis 源码](http://blog.huangz.me/diary/2014/how-to-read-redis-source-code.html)
-# 暂未注解
+## 注解思路：[huangz：如何阅读 redis 源码](http://blog.huangz.me/diary/2014/how-to-read-redis-source-code.html)
+## 参考链接：[men_wen 的博客 redis 专栏](https://blog.csdn.net/men_wen/article/category/6769467)
+## 暂未注解
 RBD存储  
 AOF存储  
 sort排序命令  

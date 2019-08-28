@@ -125,6 +125,7 @@ volatile unsigned long lru_clock; /* Server global current LRU time. */
  *    Note that commands that may trigger a DEL as a side effect (like SET)
  *    are not fast commands.
  */
+// 指令集合
 struct redisCommand redisCommandTable[] = {
     {"module",moduleCommand,-2,"as",0,NULL,0,0,0,0,0,0},
     {"get",getCommand,2,"rF",0,NULL,1,1,1,0,0,0},

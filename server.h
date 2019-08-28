@@ -1045,6 +1045,7 @@ struct redisServer {
     int cfd_count;              /* Used slots in cfd[] */
     // 使用双向链表来保存所有客户端
     list *clients;              /* List of active clients */
+    // 保存所有等待关闭的 client 链表
     list *clients_to_close;     /* Clients to close asynchronously */
     // 添加套接字处理操作
     list *clients_pending_write; /* There is to write or install handler. */
