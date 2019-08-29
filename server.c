@@ -1254,6 +1254,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     }
 
     /* Check if a background saving or AOF rewrite in progress terminated. */
+    // 检查后台 RDB 和 AOF 是否已经终止
     if (server.rdb_child_pid != -1 || server.aof_child_pid != -1 ||
         ldbPendingChildren())
     {
@@ -1273,6 +1274,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
                     (int) server.rdb_child_pid,
                     (int) server.aof_child_pid);
             } else if (pid == server.rdb_child_pid) {
+                // RDB 保存完毕
                 backgroundSaveDoneHandler(exitcode,bysignal);
                 if (!bysignal && exitcode == 0) receiveChildInfo();
             } else if (pid == server.aof_child_pid) {
@@ -1353,6 +1355,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 
     /* Replication cron function -- used to reconnect to master,
      * detect transfer failures, start background RDB transfers and so forth. */
+    // 复制函数，用来重新连接到主服务器，检测传输失败，后台 RDB 传输等
     run_with_period(1000) replicationCron();
 
     /* Run the Redis Cluster cron. */
@@ -2366,12 +2369,14 @@ struct redisCommand *lookupCommandOrOriginal(sds name) {
  * This should not be used inside commands implementation. Use instead
  * alsoPropagate(), preventCommandPropagation(), forceCommandPropagation().
  */
+// 执行命令后进行从服务器同步 cmd 命令
 void propagate(struct redisCommand *cmd, int dbid, robj **argv, int argc,
                int flags)
 {
     if (server.aof_state != AOF_OFF && flags & PROPAGATE_AOF)
         feedAppendOnlyFile(cmd,dbid,argv,argc);
     if (flags & PROPAGATE_REPL)
+    // 同步操作执行逻辑
         replicationFeedSlaves(server.slaves,dbid,argv,argc);
 }
 
@@ -2953,6 +2958,7 @@ void authCommand(client *c) {
 
 /* The PING command. It works in a different way if the client is in
  * in Pub/Sub mode. */
+ // 收到 PING 命令，返回 PONG
 void pingCommand(client *c) {
     /* The command takes zero or one arguments. */
     if (c->argc > 2) {

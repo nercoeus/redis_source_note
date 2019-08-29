@@ -73,7 +73,10 @@ char *replicationGetSlaveName(client *c) {
 }
 
 /* ---------------------------------- MASTER -------------------------------- */
-
+// 创建复制积压缓冲区
+// 复制积压缓冲区最多可以备份1M大小的数据，如果主从节点断线时间过长
+// 复制积压缓冲区的数据会被新数据覆盖，那么当从主从中断连接起
+// 主节点接收到的数据超过1M大小，那么从节点就无法进行部分重同步，只能进行全量复制。
 void createReplicationBacklog(void) {
     serverAssert(server.repl_backlog == NULL);
     server.repl_backlog = zmalloc(server.repl_backlog_size);
@@ -170,6 +173,8 @@ void feedReplicationBacklogWithObject(robj *o) {
  * the commands received by our clients in order to create the replication
  * stream. Instead if the instance is a slave and has sub-slaves attached,
  * we use replicationFeedSlavesFromMaster() */
+// 主服务器调用
+// 将参数列表中的参数发送给从服务器
 void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
     listNode *ln;
     listIter li;
@@ -341,6 +346,7 @@ void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv,
 
 /* Feed the slave 'c' with the replication backlog starting from the
  * specified 'offset' up to the end of the backlog. */
+// 将复制积压缓冲区中位同步的数据进行同步
 long long addReplyReplicationBacklog(client *c, long long offset) {
     long long j, skip, len;
 
@@ -418,17 +424,20 @@ long long getPsyncInitialOffset(void) {
 int replicationSetupSlaveForFullResync(client *slave, long long offset) {
     char buf[128];
     int buflen;
-
+    // 设置全量重同步的偏移量
     slave->psync_initial_offset = offset;
+    // 设置从节点复制状态，开始累计差异数据
     slave->replstate = SLAVE_STATE_WAIT_BGSAVE_END;
     /* We are going to accumulate the incremental changes for this
      * slave as well. Set slaveseldb to -1 in order to force to re-emit
      * a SELECT statement in the replication stream. */
+    // 将slaveseldb设置为-1，是为了强制发送一个select命令在复制流中
     server.slaveseldb = -1;
 
     /* Don't send this reply to slaves that approached us with
      * the old SYNC command. */
     if (!(slave->flags & CLIENT_PRE_PSYNC)) {
+        // 发送 FULLRESYNC 代表全局同步
         buflen = snprintf(buf,sizeof(buf),"+FULLRESYNC %s %lld\r\n",
                           server.replid,offset);
         if (write(slave->fd,buf,buflen) != buflen) {
@@ -505,6 +514,12 @@ int masterTryPartialResynchronization(client *c) {
      * 1) Set client state to make it a slave.
      * 2) Inform the client we can continue with +CONTINUE
      * 3) Send the backlog data (from the offset to the end) to the slave. */
+    // 现在可以执行部分同步
+    // 1. 设置client状态为从节点
+    // 2. 向从节点发送 +CONTINUE 表示接受 partial resync 被接受
+    // 3. 发送backlog的数据给从节点
+
+    // 设置client状态为从服务器
     c->flags |= CLIENT_SLAVE;
     c->replstate = SLAVE_STATE_ONLINE;
     c->repl_ack_time = server.unixtime;
@@ -522,6 +537,7 @@ int masterTryPartialResynchronization(client *c) {
         freeClientAsync(c);
         return C_OK;
     }
+    // 将backlog的数据发送从节点
     psync_len = addReplyReplicationBacklog(c,psync_offset);
     serverLog(LL_NOTICE,
         "Partial resynchronization request from %s accepted. Sending %lld bytes of backlog starting from offset %lld.",
@@ -560,8 +576,10 @@ need_full_resync:
  *    started.
  *
  * Returns C_OK on success or C_ERR otherwise. */
+// 开始执行 BGSAVE
 int startBgsaveForReplication(int mincapa) {
     int retval;
+    // 是否直接写入 socket
     int socket_target = server.repl_diskless_sync && (mincapa & SLAVE_CAPA_EOF);
     listIter li;
     listNode *ln;
@@ -575,8 +593,11 @@ int startBgsaveForReplication(int mincapa) {
      * otherwise slave will miss repl-stream-db. */
     if (rsiptr) {
         if (socket_target)
+            // 直接写到socket中
+            // fork一个子进程将rdb写到 状态为等待BGSAVE开始 的从节点的socket中
             retval = rdbSaveToSlavesSockets(rsiptr);
         else
+            // 否则后台进行RDB持久化BGSAVE操作，保存到磁盘上
             retval = rdbSaveBackground(server.rdb_filename,rsiptr);
     } else {
         serverLog(LL_WARNING,"BGSAVE for replication: replication information not available, can't generate the RDB file right now. Try later.");
@@ -605,12 +626,16 @@ int startBgsaveForReplication(int mincapa) {
 
     /* If the target is socket, rdbSaveToSlavesSockets() already setup
      * the salves for a full resync. Otherwise for disk target do it now.*/
+    // 如果是直接写到socket中， rdbSaveToSlavesSockets()已经会设置从服务器客户端为全局复制
+    // 否则直接写到磁盘上，执行以下代码
     if (!socket_target) {
+        // 遍历从服务器链表
         listRewind(server.slaves,&li);
         while((ln = listNext(&li))) {
             client *slave = ln->value;
-
+            // 正在等待传输 RDB 文件
             if (slave->replstate == SLAVE_STATE_WAIT_BGSAVE_START) {
+                    // 回复全局同步 FULL 给从服务器，并设置该从服务器客户端的状态
                     replicationSetupSlaveForFullResync(slave,
                             getPsyncInitialOffset());
             }
@@ -624,6 +649,8 @@ int startBgsaveForReplication(int mincapa) {
 }
 
 /* SYNC and PSYNC command implemenation. */
+// 主服务器执行
+// SYNC 和 PSYNC 的执行逻辑，这里的 c 其实是从服务器
 void syncCommand(client *c) {
     /* ignore SYNC if already slave or in monitor mode */
     if (c->flags & CLIENT_SLAVE) return;
@@ -656,39 +683,55 @@ void syncCommand(client *c) {
      *
      * So the slave knows the new replid and offset to try a PSYNC later
      * if the connection with the master is lost. */
+    // 尝试执行一个部分同步PSYNC的命令，则 masterTryPartialResynchronization()
+    // 如果失败则执行全量同步会回复一个 "+FULLRESYNC <runid> <offset>"
+    // 所以，从节点会如果和主节点连接断开，从节点会知道runid和offset，随后会尝试执行PSYNC
+    // 如果是执行PSYNC命令
     if (!strcasecmp(c->argv[0]->ptr,"psync")) {
+        // 主节点尝试执行部分重同步，执行成功返回C_OK
         if (masterTryPartialResynchronization(c) == C_OK) {
             server.stat_sync_partial_ok++;
+            // 不需要执行重新同步
             return; /* No full resync needed, return. */
         } else {
+            // 全部同步
             char *master_replid = c->argv[1]->ptr;
 
             /* Increment stats for failed PSYNCs, but only if the
              * replid is not "?", as this is used by slaves to force a full
              * resync on purpose when they are not albe to partially
              * resync. */
+             // 从节点以强制全量同步为目的，所以不能执行部分重同步，因此增加PSYNC命令失败的次数
             if (master_replid[0] != '?') server.stat_sync_partial_err++;
         }
     } else {
         /* If a slave uses SYNC, we are dealing with an old implementation
          * of the replication protocol (like redis-cli --slave). Flag the client
          * so that we don't expect to receive REPLCONF ACK feedbacks. */
+        // 设置标识，执行SYNC命令，不接受REPLCONF ACK
         c->flags |= CLIENT_PRE_PSYNC;
     }
 
     /* Full resynchronization. */
+    // 全局同步数加一
     server.stat_sync_full++;
 
     /* Setup the slave as one waiting for BGSAVE to start. The following code
      * paths will change the state if we handle the slave differently. */
+    // 设置client状态为：从服务器节点等待BGSAVE节点的开始
     c->replstate = SLAVE_STATE_WAIT_BGSAVE_START;
+    // 执行SYNC命令后是否关闭 TCP_NODELAY，配置文件中进行配置
     if (server.repl_disable_tcp_nodelay)
         anetDisableTcpNoDelay(NULL, c->fd); /* Non critical if it fails. */
+    // 保存主服务器传输 RDB 文件的 fd
     c->repldbfd = -1;
+    // 设置 client 状态为从节点，标识 client 是一个从服务器
     c->flags |= CLIENT_SLAVE;
+    // 添加到服务器从节点链表中
     listAddNodeTail(server.slaves,c);
 
     /* Create the replication backlog if needed. */
+    // 只有一个从节点，且backlog为空，则创建一个新的 backlog 复制积压缓冲区，具体看《redis设计与实现》
     if (listLength(server.slaves) == 1 && server.repl_backlog == NULL) {
         /* When we create the backlog from scratch, we always use a new
          * replication ID and clear the ID2, since there is no valid
@@ -699,6 +742,7 @@ void syncCommand(client *c) {
     }
 
     /* CASE 1: BGSAVE is in progress, with disk target. */
+    // 正在执行 BGSAVE 同步到磁盘上
     if (server.rdb_child_pid != -1 &&
         server.rdb_child_type == RDB_CHILD_TYPE_DISK)
     {
@@ -708,18 +752,24 @@ void syncCommand(client *c) {
         client *slave;
         listNode *ln;
         listIter li;
-
+        // 遍历从服务器链表
         listRewind(server.slaves,&li);
         while((ln = listNext(&li))) {
             slave = ln->value;
+            // 如果有从节点已经创建子进程执行写RDB操作，等待完成，那么退出循环
+            // 从节点的状态为 SLAVE_STATE_WAIT_BGSAVE_END 在情况三中被设置
             if (slave->replstate == SLAVE_STATE_WAIT_BGSAVE_END) break;
         }
         /* To attach this slave, we check that it has at least all the
          * capabilities of the slave that triggered the current BGSAVE. */
+        // 对于这个从节点，我们检查它是否具有触发当前BGSAVE操作的能力
         if (ln && ((c->slave_capa & slave->slave_capa) == slave->slave_capa)) {
+            // 抄作业？？？
             /* Perfect, the server is already registering differences for
              * another slave. Set the right state, and copy the buffer. */
+            // 将slave的输出缓冲区所有内容拷贝给c的所有输出缓冲区中
             copyClientOutputBuffer(c,slave);
+            // 设置全量重同步从节点的状态，设置部分重同步的偏移量
             replicationSetupSlaveForFullResync(c,slave->psync_initial_offset);
             serverLog(LL_NOTICE,"Waiting for end of BGSAVE for SYNC");
         } else {
@@ -729,16 +779,20 @@ void syncCommand(client *c) {
         }
 
     /* CASE 2: BGSAVE is in progress, with socket target. */
+    // 正在执行 BGSAVE 同步到套接字中
     } else if (server.rdb_child_pid != -1 &&
                server.rdb_child_type == RDB_CHILD_TYPE_SOCKET)
     {
         /* There is an RDB child process but it is writing directly to
          * children sockets. We need to wait for the next BGSAVE
          * in order to synchronize. */
+        // 虽然有子进程在执行写 RDB，但是它直接写到 socket 中，所以等待下次执行 BGSAVE
         serverLog(LL_NOTICE,"Current BGSAVE has socket target. Waiting for next BGSAVE for SYNC");
 
     /* CASE 3: There is no BGSAVE is progress. */
+    // 没有执行BGSAVE的进程
     } else {
+        // 服务器支持无盘同步
         if (server.repl_diskless_sync && (c->slave_capa & SLAVE_CAPA_EOF)) {
             /* Diskless replication RDB child is created inside
              * replicationCron() since we want to delay its start a
@@ -746,9 +800,12 @@ void syncCommand(client *c) {
             if (server.repl_diskless_sync_delay)
                 serverLog(LL_NOTICE,"Delay next BGSAVE for diskless SYNC");
         } else {
+            // 服务器不支持无盘复制
             /* Target is disk (or the slave is not capable of supporting
              * diskless replication) and we don't have a BGSAVE in progress,
              * let's start one. */
+            // 如果没有正在执行BGSAVE，且没有进行写AOF文件
+            // 则开始为复制执行BGSAVE，并且是将RDB文件写到磁盘上
             if (server.aof_child_pid == -1) {
                 startBgsaveForReplication(c->slave_capa);
             } else {
@@ -773,6 +830,7 @@ void syncCommand(client *c) {
  * In the future the same command can be used in order to configure
  * the replication to initiate an incremental replication instead of a
  * full resync. */
+
 void replconfCommand(client *c) {
     int j;
 
@@ -852,6 +910,10 @@ void replconfCommand(client *c) {
  *    command disables it, so that we can accumulate output buffer without
  *    sending it to the slave.
  * 3) Update the count of good slaves. */
+// 主服务器调用
+// 将从服务器客户端的复制状态设置为 SLAVE_STATE_ONLINE
+// 表示已经发送RDB文件完毕，要发送缓存更新了
+// 到这里同步就完成了。。。
 void putSlaveOnline(client *slave) {
     slave->replstate = SLAVE_STATE_ONLINE;
     slave->repl_put_online_on_ack = 0;
@@ -867,6 +929,7 @@ void putSlaveOnline(client *slave) {
         replicationGetSlaveName(slave));
 }
 
+// 将RDB文件写入到fd中，触发从节点的读事件
 void sendBulkToSlave(aeEventLoop *el, int fd, void *privdata, int mask) {
     client *slave = privdata;
     UNUSED(el);
@@ -919,6 +982,7 @@ void sendBulkToSlave(aeEventLoop *el, int fd, void *privdata, int mask) {
         close(slave->repldbfd);
         slave->repldbfd = -1;
         aeDeleteFileEvent(server.el,slave->fd,AE_WRITABLE);
+        // 发送完毕，设置从服务器客户端状态
         putSlaveOnline(slave);
     }
 }
@@ -937,6 +1001,11 @@ void sendBulkToSlave(aeEventLoop *el, int fd, void *privdata, int mask) {
  * otherwise C_ERR is passed to the function.
  * The 'type' argument is the type of the child that terminated
  * (if it had a disk or socket target). */
+// 主服务器调用
+// 在每次 BGSAVE 执行完毕之后使用
+// bgsaveerr 可能是 REDIS_OK 或者 REDIS_ERR ，显示 BGSAVE 的执行结果
+// 这个函数是在 BGSAVE 完成之后的异步回调函数，
+// 它指导该怎么执行和 slave 相关的 RDB 下一步工作。
 void updateSlavesWaitingBgsave(int bgsaveerr, int type) {
     listNode *ln;
     int startbgsave = 0;
@@ -990,6 +1059,7 @@ void updateSlavesWaitingBgsave(int bgsaveerr, int type) {
                     (unsigned long long) slave->repldbsize);
 
                 aeDeleteFileEvent(server.el,slave->fd,AE_WRITABLE);
+                // 调用 sendBulkToSlave 将 RDB 写入 fd
                 if (aeCreateFileEvent(server.el, slave->fd, AE_WRITABLE, sendBulkToSlave, slave) == AE_ERR) {
                     freeClient(slave);
                     continue;
@@ -1103,6 +1173,8 @@ void restartAOF() {
 
 /* Asynchronously read the SYNC payload we receive from a master */
 #define REPL_MAX_WRITTEN_BEFORE_FSYNC (1024*1024*8) /* 8 MB */
+// 从服务器调用
+// 有 RDB 文件到达，开始执行
 void readSyncBulkPayload(aeEventLoop *el, int fd, void *privdata, int mask) {
     char buf[4096];
     ssize_t nread, readlen, nwritten;
@@ -1326,6 +1398,7 @@ error:
 #define SYNC_CMD_READ (1<<0)
 #define SYNC_CMD_WRITE (1<<1)
 #define SYNC_CMD_FULL (SYNC_CMD_READ|SYNC_CMD_WRITE)
+// 发送命令给主服务器
 char *sendSynchronousCommand(int flags, int fd, ...) {
 
     /* Create the command to send to the master, we use redis binary
@@ -1434,31 +1507,39 @@ char *sendSynchronousCommand(int flags, int fd, ...) {
 #define PSYNC_FULLRESYNC 3
 #define PSYNC_NOT_SUPPORTED 4
 #define PSYNC_TRY_LATER 5
+// 尝试进行局部同步
 int slaveTryPartialResynchronization(int fd, int read_reply) {
     char *psync_replid;
     char psync_offset[32];
     sds reply;
 
     /* Writing half */
+    // 写部分，写入一个 PSYNC 命令
     if (!read_reply) {
         /* Initially set master_initial_offset to -1 to mark the current
          * master run_id and offset as not valid. Later if we'll be able to do
          * a FULL resync using the PSYNC command we'll set the offset at the
          * right value, so that this information will be propagated to the
          * client structure representing the master into server.master. */
+        // 将 repl_master_initial_offset 设置为-1 表示主服务器的 run_id 和全局复制偏移量是无效的。
+        // 如果能使用 PSYNC 命令执行一个全量同步，会正确设置全复制偏移量
+        // 以便这个信息被正确传播主节点的所有从服务器中
         server.master_initial_offset = -1;
-
+        // 主节点的缓存不为空，可以尝试进行部分重同步。
+        // PSYNC run_id offset
         if (server.cached_master) {
             psync_replid = server.cached_master->replid;
             snprintf(psync_offset,sizeof(psync_offset),"%lld", server.cached_master->reploff+1);
             serverLog(LL_NOTICE,"Trying a partial resynchronization (request %s:%s).", psync_replid, psync_offset);
         } else {
+            // 主节点的缓存为空，发送PSYNC ? -1。请求全量同步
             serverLog(LL_NOTICE,"Partial resynchronization not possible (no cached master)");
             psync_replid = "?";
             memcpy(psync_offset,"-1",3);
         }
 
         /* Issue the PSYNC command */
+        // 发送对应的命令給主服务器两种同步方式都在这里进行发送
         reply = sendSynchronousCommand(SYNC_CMD_WRITE,fd,"PSYNC",psync_replid,psync_offset,NULL);
         if (reply != NULL) {
             serverLog(LL_WARNING,"Unable to send PSYNC to master: %s",reply);
@@ -1466,31 +1547,37 @@ int slaveTryPartialResynchronization(int fd, int read_reply) {
             aeDeleteFileEvent(server.el,fd,AE_READABLE);
             return PSYNC_WRITE_ERROR;
         }
+        // 等待回复
         return PSYNC_WAIT_REPLY;
     }
 
     /* Reading half */
+    // 从主服务器读一个命令保存在 reply 中
     reply = sendSynchronousCommand(SYNC_CMD_READ,fd,NULL);
     if (sdslen(reply) == 0) {
         /* The master may send empty newlines after it receives PSYNC
          * and before to reply, just to keep the connection alive. */
+        // 主节点为了保持连接的状态，可能会在接收到PSYNC命令后发送一个空行
         sdsfree(reply);
+        // 所以就返回PSYNC_WAIT_REPLY，调用者会将read_reply设置为1，然后再次调用该函数。
         return PSYNC_WAIT_REPLY;
     }
-
+    // 读到命令，删除读事件
     aeDeleteFileEvent(server.el,fd,AE_READABLE);
-
+    // 全局同步
     if (!strncmp(reply,"+FULLRESYNC",11)) {
         char *replid = NULL, *offset = NULL;
 
         /* FULL RESYNC, parse the reply in order to extract the run id
          * and the replication offset. */
+        // 解析回复中的内容，将 reply 和复制偏移量提取出来
         replid = strchr(reply,' ');
         if (replid) {
             replid++;
             offset = strchr(replid,' ');
             if (offset) offset++;
         }
+        // 必须要有 replid 和 offset
         if (!replid || !offset || (offset-replid-1) != CONFIG_RUN_ID_SIZE) {
             serverLog(LL_WARNING,
                 "Master replied with wrong +FULLRESYNC syntax.");
@@ -1498,21 +1585,26 @@ int slaveTryPartialResynchronization(int fd, int read_reply) {
              * reply means that the master supports PSYNC, but the reply
              * format seems wrong. To stay safe we blank the master
              * replid to make sure next PSYNCs will fail. */
+            // 将主节点的运行ID重置为0
             memset(server.master_replid,0,CONFIG_RUN_ID_SIZE+1);
         } else {
+            // 设置服务器保存的主节点的运行ID
             memcpy(server.master_replid, replid, offset-replid-1);
             server.master_replid[CONFIG_RUN_ID_SIZE] = '\0';
+            // 主节点的偏移量
             server.master_initial_offset = strtoll(offset,NULL,10);
             serverLog(LL_NOTICE,"Full resync from master: %s:%lld",
                 server.master_replid,
                 server.master_initial_offset);
         }
         /* We are going to full resync, discard the cached master structure. */
+        // 执行全量同步，所以缓存的主服务器结构没用了，将其清空
         replicationDiscardCachedMaster();
         sdsfree(reply);
+        // 返回全局同步标识
         return PSYNC_FULLRESYNC;
     }
-
+    // 局部同步
     if (!strncmp(reply,"+CONTINUE",9)) {
         /* Partial resync was accepted. */
         serverLog(LL_NOTICE,
@@ -1558,6 +1650,7 @@ int slaveTryPartialResynchronization(int fd, int read_reply) {
          * PSYNC from the persistence file, our replication backlog could
          * be still not initialized. Create it. */
         if (server.repl_backlog == NULL) createReplicationBacklog();
+        // 返回局部同步标识
         return PSYNC_CONTINUE;
     }
 
@@ -1580,20 +1673,24 @@ int slaveTryPartialResynchronization(int fd, int read_reply) {
 
     if (strncmp(reply,"-ERR",4)) {
         /* If it's not an error, log the unexpected event. */
+        // 不支持 PSYNC
         serverLog(LL_WARNING,
             "Unexpected reply to PSYNC from master: %s", reply);
     } else {
+        // 错误的回复
         serverLog(LL_NOTICE,
             "Master does not support PSYNC or is in "
             "error state (reply: %s)", reply);
     }
     sdsfree(reply);
     replicationDiscardCachedMaster();
+    // 返回不支持 PSYNC 标识
     return PSYNC_NOT_SUPPORTED;
 }
 
 /* This handler fires when the non blocking connect was able to
  * establish a connection with the master. */
+// 用来处理主从连接描述符之间的通信逻辑
 void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
     char tmpfile[256], *err = NULL;
     int dfd = -1, maxtries = 5;
@@ -1621,21 +1718,28 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
     }
 
     /* Send a PING to check the master is able to reply without errors. */
+    // 正在连接时，会发送一个 ping 来确定网络是否 OK
     if (server.repl_state == REPL_STATE_CONNECTING) {
         serverLog(LL_NOTICE,"Non blocking connect for SYNC fired the event.");
         /* Delete the writable event so that the readable event remains
          * registered and we can wait for the PONG reply. */
+        // 删除写事件
         aeDeleteFileEvent(server.el,fd,AE_WRITABLE);
+        // 等待接收 PONG
         server.repl_state = REPL_STATE_RECEIVE_PONG;
         /* Send the PING, don't check for errors at all, we have the timeout
          * that will take care about this. */
+        // 发送 ping 命令，等待主服务器返回 PONG
         err = sendSynchronousCommand(SYNC_CMD_WRITE,fd,"PING",NULL);
         if (err) goto write_error;
         return;
     }
 
     /* Receive the PONG command. */
+    // 如果复制的状态为 REPL_STATE_RECEIVE_PONG，等待接受 PONG 命令
     if (server.repl_state == REPL_STATE_RECEIVE_PONG) {
+        // 从主服务器读一个 PONG 命令 sendSynchronousCommand
+        // 使用了 SYNC_CMD_READ 标志
         err = sendSynchronousCommand(SYNC_CMD_READ,fd,NULL);
 
         /* We accept only two replies as valid, a positive +PONG reply
@@ -1643,6 +1747,8 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
          * Note that older versions of Redis replied with "operation not
          * permitted" instead of using a proper error code, so we test
          * both. */
+        // 只接受两种有效的回复。一种是 "+PONG"，一种是认证错误"-NOAUTH"。
+        // 旧版本的返回有"-ERR operation not permitted"
         if (err[0] != '+' &&
             strncmp(err,"-NOAUTH",7) != 0 &&
             strncmp(err,"-ERR operation not permitted",28) != 0)
@@ -1655,23 +1761,31 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
                 "Master replied to PING, replication can continue...");
         }
         sdsfree(err);
+        // 已经收到PONG，更改状态设置为发送认证命令 AUTH 给主节点
         server.repl_state = REPL_STATE_SEND_AUTH;
     }
 
     /* AUTH with the master if required. */
+    // 权限认证
     if (server.repl_state == REPL_STATE_SEND_AUTH) {
+        // 判断是否设置了认证密码
         if (server.masterauth) {
+            // 发送 AUTH 命令
             err = sendSynchronousCommand(SYNC_CMD_WRITE,fd,"AUTH",server.masterauth,NULL);
             if (err) goto write_error;
+            // 等待接收认证回复
             server.repl_state = REPL_STATE_RECEIVE_AUTH;
             return;
         } else {
+            // 没有的话直接变成发送端口号给主服务器
             server.repl_state = REPL_STATE_SEND_PORT;
         }
     }
 
     /* Receive AUTH reply. */
+    // 认证回复
     if (server.repl_state == REPL_STATE_RECEIVE_AUTH) {
+        // 读取主服务器返回
         err = sendSynchronousCommand(SYNC_CMD_READ,fd,NULL);
         if (err[0] == '-') {
             serverLog(LL_WARNING,"Unable to AUTH to MASTER: %s",err);
@@ -1679,46 +1793,59 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
             goto error;
         }
         sdsfree(err);
+        // 直接变成发送端口号给主服务器
         server.repl_state = REPL_STATE_SEND_PORT;
     }
 
     /* Set the slave port, so that Master's INFO command can list the
      * slave listening port correctly. */
+    // 如果复制状态是，发送从服务器端口号给主服务器，主服务器的 INFO 命令就能够列出从服务器正在监听的端口号 
     if (server.repl_state == REPL_STATE_SEND_PORT) {
+        // 获取监听端口号，设置了单独的端口供主从复制就使用这个端口
         sds port = sdsfromlonglong(server.slave_announce_port ?
             server.slave_announce_port : server.port);
+        // 发送 REPLCONF listening-port 命令
         err = sendSynchronousCommand(SYNC_CMD_WRITE,fd,"REPLCONF",
                 "listening-port",port, NULL);
         sdsfree(port);
         if (err) goto write_error;
         sdsfree(err);
+        // 等待服务器关于端口号的回复
         server.repl_state = REPL_STATE_RECEIVE_PORT;
         return;
     }
 
     /* Receive REPLCONF listening-port reply. */
+    // 接收主服务器的返回
     if (server.repl_state == REPL_STATE_RECEIVE_PORT) {
+        // 接收相应的回复
         err = sendSynchronousCommand(SYNC_CMD_READ,fd,NULL);
         /* Ignore the error if any, not all the Redis versions support
          * REPLCONF listening-port. */
+        // 忽略所有的错误，因为不是所有的Redis版本都支持REPLCONF listening-port命令
         if (err[0] == '-') {
             serverLog(LL_NOTICE,"(Non critical) Master does not understand "
                                 "REPLCONF listening-port: %s", err);
         }
         sdsfree(err);
+        // 开始发送 IP 地址
         server.repl_state = REPL_STATE_SEND_IP;
     }
 
     /* Skip REPLCONF ip-address if there is no slave-announce-ip option set. */
+    // 没有专用 IP 地址就不发送
     if (server.repl_state == REPL_STATE_SEND_IP &&
         server.slave_announce_ip == NULL)
     {
+            // 准备发送一个capa（能否解析出RDB文件的EOF流格式？）
             server.repl_state = REPL_STATE_SEND_CAPA;
     }
 
     /* Set the slave ip, so that Master's INFO command can list the
      * slave IP address port correctly in case of port forwarding or NAT. */
+    // 有 IP 就发送命令
     if (server.repl_state == REPL_STATE_SEND_IP) {
+        // 发送 IP 地址
         err = sendSynchronousCommand(SYNC_CMD_WRITE,fd,"REPLCONF",
                 "ip-address",server.slave_announce_ip, NULL);
         if (err) goto write_error;
@@ -1728,10 +1855,12 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
     }
 
     /* Receive REPLCONF ip-address reply. */
+    // 接收主服务器关于 IP 的回复
     if (server.repl_state == REPL_STATE_RECEIVE_IP) {
         err = sendSynchronousCommand(SYNC_CMD_READ,fd,NULL);
         /* Ignore the error if any, not all the Redis versions support
-         * REPLCONF listening-port. */
+         * REPLCONF listening-IP. */
+        // 忽略所有的错误，因为不是所有的Redis版本都支持REPLCONF listening-IP命令
         if (err[0] == '-') {
             serverLog(LL_NOTICE,"(Non critical) Master does not understand "
                                 "REPLCONF ip-address: %s", err);
@@ -1746,16 +1875,19 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
      * PSYNC2: supports PSYNC v2, so understands +CONTINUE <new repl ID>.
      *
      * The master will ignore capabilities it does not understand. */
+    // REPLCONF capa eof
     if (server.repl_state == REPL_STATE_SEND_CAPA) {
         err = sendSynchronousCommand(SYNC_CMD_WRITE,fd,"REPLCONF",
                 "capa","eof","capa","psync2",NULL);
         if (err) goto write_error;
         sdsfree(err);
+        // 设置复制状态为接受主节点的 capa
         server.repl_state = REPL_STATE_RECEIVE_CAPA;
         return;
     }
 
     /* Receive CAPA reply. */
+    // 接收关于 CAPA 的回复
     if (server.repl_state == REPL_STATE_RECEIVE_CAPA) {
         err = sendSynchronousCommand(SYNC_CMD_READ,fd,NULL);
         /* Ignore the error if any, not all the Redis versions support
@@ -1765,6 +1897,7 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
                                   "REPLCONF capa: %s", err);
         }
         sdsfree(err);
+        // 设置复制状态为发送PSYNC命令
         server.repl_state = REPL_STATE_SEND_PSYNC;
     }
 
@@ -1773,26 +1906,37 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
      * to start a full resynchronization so that we get the master run id
      * and the global offset, to try a partial resync at the next
      * reconnection attempt. */
+    // 发送 PSYNC 命令，准备同步
+    // 共有两种同步方式，全局同步和局部同步，具体细节见《redis设计与实现》P203
     if (server.repl_state == REPL_STATE_SEND_PSYNC) {
+        // 向主节点发送一个部分重同步命令PSYNC
+        // 参数0表示不读主节点的回复，只获取主节点的运行runid和全局复制偏移量
+        // 调用 slaveTryPartialResynchronization 尝试局部同步
+        // slaveTryPartialResynchronization 函数分为两个部分，一部分读一部分写
+        // 从服务器执行写所以参数为（fd， 0）
+        // 如果要读使用（fd， 1）
         if (slaveTryPartialResynchronization(fd,0) == PSYNC_WRITE_ERROR) {
             err = sdsnew("Write error sending the PSYNC command.");
             goto write_error;
         }
+        // 设置复制状态为等待接受一个PSYNC回复
         server.repl_state = REPL_STATE_RECEIVE_PSYNC;
         return;
     }
 
     /* If reached this point, we should be in REPL_STATE_RECEIVE_PSYNC. */
+    // 做个判断
     if (server.repl_state != REPL_STATE_RECEIVE_PSYNC) {
         serverLog(LL_WARNING,"syncWithMaster(): state machine error, "
                              "state should be RECEIVE_PSYNC but is %d",
                              server.repl_state);
         goto error;
     }
-
+    // 那么尝试进行第二次部分重同步，从主节点读取指令来决定执行部分重同步还是全量同步
     psync_result = slaveTryPartialResynchronization(fd,1);
+    // 一会再尝试
     if (psync_result == PSYNC_WAIT_REPLY) return; /* Try again later... */
-
+    // 关于回复的一系列判断处理
     /* If the master is in an transient error, we should try to PSYNC
      * from scratch later, so go to the error path. This happens when
      * the server is loading the dataset or is not connected with its
@@ -1827,10 +1971,14 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
     }
 
     /* Prepare a suitable temp file for bulk transfer */
+    // 准备一个合适临时文件用来写入和保存主节点传来的RDB文件数据
     while(maxtries--) {
+        // 设置一个文件用来存储 RDB 数据
         snprintf(tmpfile,256,
             "temp-%d.%ld.rdb",(int)server.unixtime,(long int)getpid());
+        // 以读写，可执行权限打开临时文件
         dfd = open(tmpfile,O_CREAT|O_WRONLY|O_EXCL,0644);
+        // 准备 OK
         if (dfd != -1) break;
         sleep(1);
     }
@@ -1840,6 +1988,7 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
     }
 
     /* Setup the non blocking download of the bulk file. */
+    // 开始读取这个描述符，等待 RDB 文件到达并执行
     if (aeCreateFileEvent(server.el,fd, AE_READABLE,readSyncBulkPayload,NULL)
             == AE_ERR)
     {
@@ -1848,14 +1997,21 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
             strerror(errno),fd);
         goto error;
     }
-
+    // 复制状态为正从主节点接受RDB文件
     server.repl_state = REPL_STATE_TRANSFER;
+    // 初始化RDB文件的大小
     server.repl_transfer_size = -1;
+    // 已读的大小
     server.repl_transfer_read = 0;
+    // 最近一个执行fsync的偏移量为0
     server.repl_transfer_last_fsync_off = 0;
+    // 传输RDB文件的临时fd
     server.repl_transfer_fd = dfd;
+    // 最近一次读到RDB文件内容的时间
     server.repl_transfer_lastio = server.unixtime;
+    // 保存RDB文件的临时文件名
     server.repl_transfer_tmpfile = zstrdup(tmpfile);
+    // 到这里全局同步的从服务器就准备好了，等待主服务器发送 RDB 文件，加载一下即可
     return;
 
 error:
@@ -1872,9 +2028,10 @@ write_error: /* Handle sendSynchronousCommand(SYNC_CMD_WRITE) errors. */
     goto error;
 }
 
+// 连接到主服务器
 int connectWithMaster(void) {
     int fd;
-
+    // 非阻塞方式连接主节点，失败会进行重连
     fd = anetTcpNonBlockBestEffortBindConnect(NULL,
         server.masterhost,server.masterport,NET_FIRST_BIND_ADDR);
     if (fd == -1) {
@@ -1882,7 +2039,7 @@ int connectWithMaster(void) {
             strerror(errno));
         return C_ERR;
     }
-
+    // 监听读写事件
     if (aeCreateFileEvent(server.el,fd,AE_READABLE|AE_WRITABLE,syncWithMaster,NULL) ==
             AE_ERR)
     {
@@ -1890,9 +2047,11 @@ int connectWithMaster(void) {
         serverLog(LL_WARNING,"Can't create readable event for SYNC");
         return C_ERR;
     }
-
+    // 最近一次读到RDB文件内容的时间
     server.repl_transfer_lastio = server.unixtime;
+    // 当前主从服务器连接描述符
     server.repl_transfer_s = fd;
+    // 连接状态为 REPL_STATE_CONNECTING
     server.repl_state = REPL_STATE_CONNECTING;
     return C_OK;
 }
@@ -1901,21 +2060,29 @@ int connectWithMaster(void) {
  * in progress to undo it.
  * Never call this function directly, use cancelReplicationHandshake() instead.
  */
+// 关闭连接，非阻塞连接可以进行使用，不要直接调用这个函数，应使用 cancelReplicationHandshake 来进行操作
 void undoConnectWithMaster(void) {
     int fd = server.repl_transfer_s;
-
+    // 直接删除事件循环中的操作即可
     aeDeleteFileEvent(server.el,fd,AE_READABLE|AE_WRITABLE);
+    // 关闭套接字描述符
     close(fd);
+    // 设置到主服务器的同步套接字描述符
     server.repl_transfer_s = -1;
 }
 
 /* Abort the async download of the bulk dataset while SYNC-ing with master.
  * Never call this function directly, use cancelReplicationHandshake() instead.
  */
+// 停止下载 RDB 文件
 void replicationAbortSyncTransfer(void) {
+    // 确保处于传输状态
     serverAssert(server.repl_state == REPL_STATE_TRANSFER);
+    // 断开主从节点连接
     undoConnectWithMaster();
+    // 关闭传输 RDB 文件的临时描述符
     close(server.repl_transfer_fd);
+    // 删除临时 RDB 文件
     unlink(server.repl_transfer_tmpfile);
     zfree(server.repl_transfer_tmpfile);
 }
@@ -1923,18 +2090,21 @@ void replicationAbortSyncTransfer(void) {
 /* This function aborts a non blocking replication attempt if there is one
  * in progress, by canceling the non-blocking connect attempt or
  * the initial bulk transfer.
- *
+ * 如果有正在进行的非阻塞复制，取消它
  * If there was a replication handshake in progress 1 is returned and
  * the replication state (server.repl_state) set to REPL_STATE_CONNECT.
- *
+ * 复制在握手阶段被取消，返回 1
+ * 设置 repl_state 为 REPL_STATE_CONNECT
  * Otherwise zero is returned and no operation is perforemd at all. */
+// 否则返回 0，不进行任何操作
 int cancelReplicationHandshake(void) {
     if (server.repl_state == REPL_STATE_TRANSFER) {
+        // 取消复制操作
         replicationAbortSyncTransfer();
         server.repl_state = REPL_STATE_CONNECT;
-    } else if (server.repl_state == REPL_STATE_CONNECTING ||
-               slaveIsInHandshakeState())
+    } else if (server.repl_state == REPL_STATE_CONNECTING || slaveIsInHandshakeState())
     {
+        // 取消握手操作
         undoConnectWithMaster();
         server.repl_state = REPL_STATE_CONNECT;
     } else {
@@ -1944,24 +2114,31 @@ int cancelReplicationHandshake(void) {
 }
 
 /* Set replication to the specified master address and port. */
+// 设置复制操作的主服务器的 IP + port
 void replicationSetMaster(char *ip, int port) {
     int was_master = server.masterhost == NULL;
 
     sdsfree(server.masterhost);
+    // 新的 IP + port
     server.masterhost = sdsnew(ip);
     server.masterport = port;
     if (server.master) {
+        // 释放原有主服务器
         freeClient(server.master);
     }
+    // 解除所有客户端的阻塞状态
     disconnectAllBlockedClients(); /* Clients blocked in master, now slave. */
 
     /* Force our slaves to resync with us as well. They may hopefully be able
      * to partially resync with us, but we can notify the replid change. */
+    // 断开所有附属客户端
     disconnectSlaves();
+    // 取消原有的复制操作
     cancelReplicationHandshake();
     /* Before destroying our master state, create a cached master using
      * our own parameters, to later PSYNC with the new master. */
     if (was_master) replicationCacheMasterUsingMyself();
+    // 设置复制必须重新连接主节点的状态，虽然上面的操作可能已经设置过了
     server.repl_state = REPL_STATE_CONNECT;
 }
 
@@ -2009,9 +2186,11 @@ void replicationHandleMasterDisconnection(void) {
      * the slaves only if we'll have to do a full resync with our master. */
 }
 
+// 执行 SLAVEOF command
 void replicaofCommand(client *c) {
     /* SLAVEOF is not allowed in cluster mode as replication is automatically
      * configured using the current address of the master node. */
+    // 在集群模式下不允许使用 SLAVEOF 进行复制服务器操作
     if (server.cluster_enabled) {
         addReplyError(c,"REPLICAOF not allowed in cluster mode.");
         return;
@@ -2019,9 +2198,12 @@ void replicaofCommand(client *c) {
 
     /* The special host/port combination "NO" "ONE" turns the instance
      * into a master. Otherwise the new master address is set. */
+    // SLAVEOF NO ONE命令使得这个从节点关闭复制功能，并从从节点转变回主节点，原来同步所得的数据集不会被丢弃。
     if (!strcasecmp(c->argv[1]->ptr,"no") &&
         !strcasecmp(c->argv[2]->ptr,"one")) {
         if (server.masterhost) {
+            // 主服务器的 IP 存在的话
+            // 取消赋值操作，设置为主服务器
             replicationUnsetMaster();
             sds client = catClientInfoString(sdsempty(),c);
             serverLog(LL_NOTICE,"MASTER MODE enabled (user request from '%s')",
@@ -2030,25 +2212,31 @@ void replicaofCommand(client *c) {
         }
     } else {
         long port;
-
+        // 获取端口号
         if ((getLongFromObjectOrReply(c, c->argv[2], &port, NULL) != C_OK))
             return;
 
         /* Check if we are already attached to the specified slave */
+        // 看看是否改变从服务器的主服务器
         if (server.masterhost && !strcasecmp(server.masterhost,c->argv[1]->ptr)
             && server.masterport == port) {
+                // 已经连接，直接返回
             serverLog(LL_NOTICE,"REPLICAOF would result into synchronization with the master we are already connected with. No operation performed.");
             addReplySds(c,sdsnew("+OK Already connected to specified master\r\n"));
             return;
         }
         /* There was no previous master or the user specified a different one,
          * we can continue. */
+        // 设置主服务器的 IP+port
         replicationSetMaster(c->argv[1]->ptr, port);
+        // 获取执行该操作客户端的数据，并打印 log
         sds client = catClientInfoString(sdsempty(),c);
         serverLog(LL_NOTICE,"REPLICAOF %s:%d enabled (user request from '%s')",
             server.masterhost, server.masterport, client);
+        // 释放该客户端的数据（并不是释放客户端）
         sdsfree(client);
     }
+    // 回复 OK，再异步执行同步操作即可
     addReply(c,shared.ok);
 }
 
@@ -2517,6 +2705,7 @@ long long replicationGetSlaveOffset(void) {
 /* --------------------------- REPLICATION CRON  ---------------------------- */
 
 /* Replication cron function, called 1 time per second. */
+// 每秒执行一次，复制操作
 void replicationCron(void) {
     static long long replication_cron_loops = 0;
 
@@ -2547,9 +2736,12 @@ void replicationCron(void) {
     }
 
     /* Check if we should connect to a MASTER */
+    // 检测是否应该连接到主服务器，如果状态是 REPL_STATE_CONNECT 就开始进行连接
     if (server.repl_state == REPL_STATE_CONNECT) {
+        // 先打个 log 再说
         serverLog(LL_NOTICE,"Connecting to MASTER %s:%d",
             server.masterhost, server.masterport);
+        // 开始连接（非阻塞方式）
         if (connectWithMaster() == C_OK) {
             serverLog(LL_NOTICE,"MASTER <-> REPLICA sync started");
         }
@@ -2558,6 +2750,7 @@ void replicationCron(void) {
     /* Send ACK to master from time to time.
      * Note that we do not send periodic acks to masters that don't
      * support PSYNC and replication offsets. */
+    // 每秒向主客户端报告自己的复制偏移量
     if (server.masterhost && server.master &&
         !(server.master->flags & CLIENT_PRE_PSYNC))
         replicationSendAck();
@@ -2571,10 +2764,13 @@ void replicationCron(void) {
     robj *ping_argv[1];
 
     /* First, send PING according to ping_slave_period. */
+    // 发送 PING 给从服务器
     if ((replication_cron_loops % server.repl_ping_slave_period) == 0 &&
         listLength(server.slaves))
     {
+        // 创建PING命令对象
         ping_argv[0] = createStringObject("PING",4);
+        // 将PING发送给从服务器
         replicationFeedSlaves(server.slaves, server.slaveseldb,
             ping_argv, 1);
         decrRefCount(ping_argv[0]);
