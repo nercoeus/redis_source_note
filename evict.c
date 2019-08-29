@@ -443,6 +443,7 @@ int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *lev
  * were over the limit, but the attempt to free memory was successful.
  * Otehrwise if we are over the memory limit, but not enough memory
  * was freed to return back under the limit, the function returns C_ERR. */
+// TODO 超过最大内存，释放一些键
 int freeMemoryIfNeeded(void) {
     /* By default replicas should ignore maxmemory
      * and just be masters exact copies. */
@@ -631,5 +632,6 @@ cant_free:
  */
 int freeMemoryIfNeededAndSafe(void) {
     if (server.lua_timedout || server.loading) return C_OK;
+    // 释放一些键值对来保证内存占用不超过最大限制
     return freeMemoryIfNeeded();
 }

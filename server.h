@@ -1010,6 +1010,7 @@ struct redisServer {
                                    is enabled. */
     int hz;                     /* serverCron() calls frequency in hertz */
     redisDb *db;
+    // 命令列表
     dict *commands;             /* Command table */
     dict *orig_commands;        /* Command table before command renaming. */
     aeEventLoop *el;
