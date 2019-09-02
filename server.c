@@ -1364,7 +1364,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     }
 
     /* Run the Sentinel timer if we are in sentinel mode. */
-    // 如果服务器运行在 sentinel 模式下，那么执行 SENTINEL 的主函数
+    // 如果服务器运行在 sentinel 模式下，那么执行 SENTINEL 的时间事件主函数
     if (server.sentinel_mode) sentinelTimer();
 
     /* Cleanup expired MIGRATE cached sockets. */
@@ -3889,11 +3889,13 @@ void memtest(size_t megabytes, int passes);
 
 /* Returns 1 if there is --sentinel among the arguments or if
  * argv[0] contains "redis-sentinel". */
+// 检查是否开启了哨兵模式
 int checkForSentinelMode(int argc, char **argv) {
     int j;
-
+    // 可以使用 redis-sentinel sentinel.conf 开启哨兵模式
     if (strstr(argv[0],"redis-sentinel") != NULL) return 1;
     for (j = 1; j < argc; j++)
+        // 或者指定 --sentinel 来开启哨兵模式
         if (!strcmp(argv[j],"--sentinel")) return 1;
     return 0;
 }
@@ -4102,7 +4104,7 @@ int main(int argc, char **argv) {
     getRandomHexChars(hashseed,sizeof(hashseed));
     // 设置哈希函数的种子
     dictSetHashFunctionSeed((uint8_t*)hashseed);
-    // 检查开启哨兵模式的两种方式
+    // 检查开启哨兵模式的两种方式，开启设置 sentinel_mode 为 1
     server.sentinel_mode = checkForSentinelMode(argc,argv);
     // 初始化服务器配置，server 是一个全局变量
     initServerConfig();
@@ -4123,8 +4125,9 @@ int main(int argc, char **argv) {
      * data structures with master nodes to monitor. */
     // 开启哨兵模式
     if (server.sentinel_mode) {
-        // 初始化哨兵的配置
+        // 初始化哨兵的默认配置
         initSentinelConfig();
+        // 初始化哨兵节点的状态
         initSentinel();
     }
 
@@ -4200,6 +4203,7 @@ int main(int argc, char **argv) {
             exit(1);
         }
         resetServerSaveParams();
+        // 载入配置文件
         loadServerConfig(configfile,options);
         sdsfree(options);
     }
@@ -4228,7 +4232,7 @@ int main(int argc, char **argv) {
     redisSetProcTitle(argv[0]);
     redisAsciiArt();
     checkTcpBacklogSettings();
-
+    // 哨兵模式和集群模式只能开启一种
     if (!server.sentinel_mode) {
         /* Things not needed when running in Sentinel mode. */
         serverLog(LL_WARNING,"Server initialized");
@@ -4250,6 +4254,7 @@ int main(int argc, char **argv) {
         if (server.sofd > 0)
             serverLog(LL_NOTICE,"The server is now ready to accept connections at %s", server.unixsocket);
     } else {
+        // 运行哨兵模式
         sentinelIsRunning();
     }
 

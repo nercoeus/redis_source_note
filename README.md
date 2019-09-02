@@ -26,6 +26,7 @@
 22|2019/8/28 |完成networking.c部分的源码注释|★★★
 23|2019/8/29 |完成server.c关于单机服务器的源码注释|★★★
 24|2019/8/29 |完成replication.c复制部分的源码注释|★★★★ |主要枝干逻辑注释完毕 
+24|2019/9/2 |完成sentinel.c主干部分的源码注释|★★★★ |故障检测与转移部分未注释
   
 ## 注解思路：[huangz：如何阅读 redis 源码](http://blog.huangz.me/diary/2014/how-to-read-redis-source-code.html)
 ## 参考链接：[men_wen 的博客 redis 专栏](https://blog.csdn.net/men_wen/article/category/6769467)
